@@ -1,0 +1,2371 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CoverPulse</title>
+<meta name="description" content="サムネ画像と曲を入れるだけで、音に合わせて動くMVを作れるブラウザツール。インストール不要・ファイルは送信されません。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230e0f13'/%3E%3Ccircle cx='32' cy='32' r='13' fill='%234fd1ff'/%3E%3Cg stroke='%234fd1ff' stroke-width='4' stroke-linecap='round'%3E%3Cpath d='M32 9v6M32 49v6M9 32h6M49 32h6M16 16l4 4M44 44l4 4M48 16l-4 4M16 48l4-4'/%3E%3C/g%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0e0f13; --panel: #171920; --line: #2a2d38; --text: #e8e9ee; --muted: #8a8fa0; --accent: #4fd1ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: "Yu Gothic UI", "Meiryo", system-ui, sans-serif; font-size: 14px; }
+  .wrap { display: grid; grid-template-columns: 1fr 340px; gap: 16px; padding: 16px; height: 100vh; }
+  .stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  canvas { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; display: block; }
+  .bar { display: flex; gap: 8px; align-items: center; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .04em; }
+  h1 small { display: block; font-size: 11px; font-weight: normal; color: var(--muted); letter-spacing: 0; margin-top: 2px; }
+  .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+  .steps span { font-size: 11px; text-align: center; padding: 5px 2px; border-radius: 6px; background: #0f1015; color: var(--muted); border: 1px solid var(--line); }
+  .steps span.done { color: var(--accent); border-color: var(--accent); }
+  .banner { background: #2a2110; border: 1px solid #6b5420; color: #ffd98a; border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.6; }
+  .banner[hidden] { display: none; }
+  footer { color: var(--muted); font-size: 11px; line-height: 1.7; border-top: 1px solid var(--line); padding-top: 10px; }
+  footer a { color: var(--muted); }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; max-width: 560px; line-height: 1.7; font-size: 13px; }
+  dialog::backdrop { background: rgba(0, 0, 0, .6); }
+  dialog h2 { font-size: 15px; margin: 0 0 8px; }
+  .drop { border: 2px dashed var(--line); border-radius: 8px; padding: 12px; text-align: center; color: var(--muted); cursor: pointer; line-height: 1.6; }
+  .drop.ok { border-color: var(--accent); color: var(--text); }
+  label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12px; }
+  label.check { flex-direction: row; align-items: center; gap: 6px; }
+  input[type=text], select { background: #0f1015; border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 7px 8px; font: inherit; }
+  input[type=range] { width: 100%; }
+  .row { display: flex; gap: 10px; align-items: end; }
+  .row > * { flex: 1; }
+  button { background: #262935; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 9px 14px; font: inherit; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  button.primary { background: var(--accent); color: #001018; border-color: var(--accent); font-weight: bold; }
+  button.small { padding: 6px 10px; font-size: 12px; }
+  .tpls { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+  .tpls button { padding: 8px 4px; font-size: 12px; }
+  .tpls button.on { border-color: var(--accent); color: var(--accent); }
+  details { border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; }
+  details[open] { padding-bottom: 10px; }
+  summary { cursor: pointer; padding: 9px 0; font-weight: bold; font-size: 13px; }
+  details > div { display: flex; flex-direction: column; gap: 10px; }
+  .progress { flex: 1; height: 6px; background: #22252f; border-radius: 3px; overflow: hidden; }
+  .progress > div { height: 100%; width: 0; background: var(--accent); }
+  .status { color: var(--muted); font-size: 12px; min-height: 1.4em; }
+  .note { color: var(--muted); font-size: 11px; line-height: 1.6; }
+  .sect { font-size: 12px; color: var(--muted); margin-bottom: -4px; }
+  .layers { display: flex; flex-direction: column; gap: 4px; }
+  .layer { display: flex; align-items: center; gap: 8px; background: #0f1015; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; cursor: grab; user-select: none; }
+  .layer.dragging { opacity: .4; }
+  .layer.flashLayer { border-style: dashed; }
+  .layer .grip { color: var(--muted); }
+  .layer .name { flex: 1; }
+  .layer .arrows button { padding: 2px 6px; font-size: 11px; }
+  .layer.sel { border-color: var(--accent); background: #13202a; }
+  .xform { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
+  .chip { font-size: 11px; padding: 3px 8px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; }
+  .chip.on { border-color: var(--accent); color: var(--accent); }
+  .val { min-width: 3.5em; text-align: right; }
+  .row.rot button { flex: 1; padding: 6px 0; }
+  canvas.movable { cursor: move; }
+  .beatRow { display: flex; align-items: center; gap: 8px; }
+  .lamp { flex: 0 0 14px; height: 14px; border-radius: 50%; background: var(--accent); opacity: .12; box-shadow: 0 0 10px var(--accent); }
+  .overlay { position: fixed; inset: 0; background: rgba(79, 209, 255, .12); border: 3px dashed var(--accent); display: none; align-items: center; justify-content: center; font-size: 24px; pointer-events: none; }
+  .overlay.on { display: flex; }
+  @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; height: auto; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="stage">
+    <canvas id="cv" width="1920" height="1080"></canvas>
+    <div class="bar">
+      <button id="playBtn" disabled>▶ プレビュー</button>
+      <div class="progress"><div id="prog"></div></div>
+      <span id="time" class="status">0:00 / 0:00</span>
+    </div>
+    <div id="status" class="status">画像と曲をドロップ（画像は Ctrl+V で貼り付けも可）</div>
+    <div id="envBanner" class="banner" hidden></div>
+  </div>
+
+  <div class="panel">
+    <h1>CoverPulse<small>サムネと曲を入れるだけで、音に合わせて動くMVに</small></h1>
+    <div class="steps"><span id="st1">① 画像</span><span id="st2">② 曲</span><span id="st3">③ 見た目</span><span id="st4">④ 書き出し</span></div>
+    <div id="imgDrop" class="drop">🖼 サムネ画像<br><small>クリック / ドロップ / Ctrl+V</small></div>
+    <div id="audDrop" class="drop">🎵 曲ファイル (WAV / MP3 など)<br><small>クリック / ドロップ</small></div>
+    <input id="imgFile" type="file" accept="image/*" hidden>
+    <div id="vidDrop" class="drop">🎞 重ねる動画（任意）<br><small>ビジュアライザー素材など（透明WebM / MP4）</small></div>
+    <input id="audFile" type="file" accept="audio/*" hidden>
+    <input id="vidFile" type="file" accept="video/*" hidden>
+
+    <div class="row">
+      <label>曲名<input id="title" type="text" placeholder="Title"></label>
+      <label>アーティスト<input id="artist" type="text" placeholder="Artist"></label>
+    </div>
+
+    <div class="sect">テンプレート</div>
+    <div id="tpls" class="tpls"></div>
+    <div class="row">
+      <select id="myTpl"><option value="">— 自分のテンプレ —</option></select>
+      <button id="saveTpl" class="small" style="flex:0">保存</button>
+      <button id="delTpl" class="small" style="flex:0">削除</button>
+    </div>
+    <div class="row">
+      <button id="importTpl" class="small">テンプレを読み込む（.json）</button>
+      <button id="exportTpl" class="small">自分のテンプレを書き出す</button>
+      <input id="tplFile" type="file" accept=".json,application/json" hidden>
+    </div>
+
+    <details open>
+      <summary>背景</summary>
+      <div>
+        <label>種類
+          <select data-k="bg">
+            <option value="blurZoom">サムネぼかし（ゆっくりズーム）</option>
+            <option value="blurStatic">サムネぼかし（静止）</option>
+            <option value="darkImage">サムネを暗く（ぼかしなし）</option>
+            <option value="gradient">流れるグラデーション</option>
+            <option value="black">黒</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" data-k="bgPulse"> 低音で背景が膨らむ</label>
+        <label>アクセント色<input type="color" data-k="accent"></label>
+      </div>
+    </details>
+
+    <details open>
+      <summary>中央の画像</summary>
+      <div>
+        <div class="row">
+          <label>形
+            <select data-k="imgShape">
+              <option value="circle">円</option>
+              <option value="rounded">角丸四角</option>
+              <option value="square">四角</option>
+              <option value="original">元の比率のまま</option>
+            </select>
+          </label>
+          <label>動き
+            <select data-k="imgMotion">
+              <option value="static">静止</option>
+              <option value="pulse">低音で拡大</option>
+              <option value="float">ふわふわ浮く</option>
+              <option value="rotate">ゆっくり回転</option>
+            </select>
+          </label>
+        </div>
+        <label>大きさ <input type="range" data-k="imgSize" min="200" max="900" step="10"></label>
+        <label class="check"><input type="checkbox" data-k="imgBorder"> 縁取り（アクセント色）</label>
+      </div>
+    </details>
+
+    <details open>
+      <summary>ビジュアライザー</summary>
+      <div>
+        <label>種類
+          <select data-k="viz">
+            <option value="circleBars">円形バー（画像の周り）</option>
+            <option value="circleWave">円形ウェーブ（画像の周り）</option>
+            <option value="bottomBars">下部バー</option>
+            <option value="wave">波形ライン（横一直線）</option>
+            <option value="none">なし</option>
+          </select>
+        </label>
+        <label>感度 <input type="range" data-k="sens" min="0.3" max="2.5" step="0.05"></label>
+      </div>
+    </details>
+
+    <details open>
+      <summary>Studio ビジュアライザー</summary>
+      <div>
+        <div class="tpls" id="stSlots" style="grid-template-columns: 1fr 1fr"></div>
+        <div class="note" style="margin-top:-4px">4つまで同時に使えます（例: HALO と AURORA）。ボタンで編集するスロットを切り替えます。</div>
+        <label>スタイル
+          <select data-k="stStyle">
+            <option value="none">使わない</option>
+            <option value="halo">HALO（円形・放射）</option>
+            <option value="aurora">AURORA（ネオンの波）</option>
+            <option value="stardust">STARDUST（粒子）</option>
+            <option value="matrix">MATRIX（光る点の格子）</option>
+            <option value="prism">PRISM（幾何学）</option>
+          </select>
+        </label>
+        <div id="stOpts">
+          <label>配色
+            <select data-k="stPal">
+              <option value="accent">アクセント色に合わせる</option>
+              <option value="0">Aurora</option><option value="1">Neon</option><option value="2">Sunset</option>
+              <option value="3">Sakura</option><option value="4">Gold</option><option value="5">Mono</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" data-k="stFit"> 中央の画像に合わせる（HALO / STARDUST は大きさも、PRISM は位置だけ）</label>
+          <label>感度 <input type="range" data-k="stSens" min="0" max="1" step="0.01"></label>
+          <label>動きの大きさ <input type="range" data-k="stAmount" min="0.2" max="2" step="0.01"></label>
+          <label>なめらかさ <input type="range" data-k="stSmooth" min="0" max="1" step="0.01"></label>
+          <label>サイズ（合わせない時） <input type="range" data-k="stSize" min="0.4" max="1.8" step="0.01"></label>
+          <label>光の強さ <input type="range" data-k="stGlow" min="0" max="2" step="0.01"></label>
+          <label>回転の速さ <input type="range" data-k="stSpeed" min="0" max="3" step="0.01"></label>
+          <label>粒の量（STARDUST） <input type="range" data-k="stDensity" min="0.2" max="3" step="0.01"></label>
+          <label>不透明度 <input type="range" data-k="stOpacity" min="0" max="1" step="0.05"></label>
+          <div class="row">
+            <label class="check"><input type="checkbox" data-k="stFlipH"> 左右反転</label>
+            <label class="check"><input type="checkbox" data-k="stFlipV"> 上下反転</label>
+          </div>
+          <label>複製
+            <select data-k="stMirror">
+              <option value="none">しない</option>
+              <option value="h">左右対称に複製（両サイドに並べる）</option>
+              <option value="v">上下対称に複製</option>
+              <option value="both">上下左右の4つに複製</option>
+            </select>
+          </label>
+          <div class="note">位置・大きさ・回転はレイヤー欄で「Studio スロット」を選んで調整します。</div>
+        </div>
+      </div>
+    </details>
+
+    <details>
+      <summary>パーティクル</summary>
+      <div>
+        <label>種類
+          <select data-k="particles">
+            <option value="outward">外へ流れる光</option>
+            <option value="snow">降る粒</option>
+            <option value="bokeh">浮かぶ玉ボケ</option>
+            <option value="none">なし</option>
+          </select>
+        </label>
+        <label>量 <input type="range" data-k="partAmount" min="0" max="400" step="10"></label>
+      </div>
+    </details>
+
+    <details>
+      <summary>ビート演出</summary>
+      <div>
+        <label>反応する音
+          <select data-k="beatBand">
+            <option value="kick">キック（40〜130Hz）</option>
+            <option value="bass">低音全体（〜250Hz）</option>
+          </select>
+        </label>
+        <label>反応の感度 <span class="beatRow"><input type="range" data-k="beatSens" min="0" max="2" step="0.05"><span id="beatLamp" class="lamp" title="ビートを拾うと光ります"></span></span></label>
+        <div class="note" style="margin-top:-6px">再生中にランプがキックに合わせて光るよう調整してください。光りすぎるなら下げる、拾わないなら上げる。</div>
+        <label>画面の揺れ <input type="range" data-k="shake" min="0" max="2" step="0.05"></label>
+        <label>フラッシュ <input type="range" data-k="flash" min="0" max="1" step="0.05"></label>
+        <label>ズームパンチ（画面全体が跳ねる） <input type="range" data-k="punch" min="0" max="2" step="0.05"></label>
+      </div>
+    </details>
+
+    <details open>
+      <summary>レイヤー（ビートの効く範囲）</summary>
+      <div>
+        <div class="note">上ほど手前。ドラッグか ▲▼ で重ね順を変えられます。<br>
+          「揺れ」が ON のレイヤーだけ、ビートで揺れ・ズームパンチします。<br>
+          フラッシュはこの行より下のレイヤーだけを光らせます。</div>
+        <div id="layers" class="layers"></div>
+        <div id="xform" class="xform">
+          <div class="sect">選択中: <b id="xfName"></b> — 行をクリックで選択、プレビュー画面のドラッグで移動</div>
+          <label>横位置 <span class="beatRow"><input type="range" data-x="x" min="-1400" max="1400" step="1"><span data-xv="x" class="status val"></span></span></label>
+          <label>縦位置 <span class="beatRow"><input type="range" data-x="y" min="-900" max="900" step="1"><span data-xv="y" class="status val"></span></span></label>
+          <label>大きさ <span class="beatRow"><input type="range" data-x="sc" min="0.05" max="3" step="0.01"><span data-xv="sc" class="status val"></span></span></label>
+          <label>回転 <span class="beatRow"><input type="range" data-x="rot" min="-180" max="180" step="1"><span data-xv="rot" class="status val"></span></span></label>
+          <div class="row rot">
+            <button class="small" data-rot="-90">-90°</button><button class="small" data-rot="0">0°</button>
+            <button class="small" data-rot="90">90°</button><button class="small" data-rot="180">180°</button>
+          </div>
+          <button id="xfReset" class="small">このレイヤーの配置をリセット</button>
+        </div>
+        <div id="xformNone" class="note" hidden>フラッシュは画面全体にかかるので、配置の調整はありません。</div>
+      </div>
+    </details>
+
+    <details>
+      <summary>仕上げ・テキスト</summary>
+      <div>
+        <label>重ねる質感
+          <select data-k="overlay">
+            <option value="none">なし</option>
+            <option value="film">フィルムノイズ</option>
+            <option value="scanline">走査線</option>
+            <option value="vignette">周辺を暗く</option>
+          </select>
+        </label>
+        <div class="row">
+          <label>文字の位置
+            <select data-k="textPos">
+              <option value="bottomLeft">左下</option>
+              <option value="topLeft">左上</option>
+              <option value="underImage">画像の下</option>
+              <option value="hidden">表示しない</option>
+            </select>
+          </label>
+          <label>書体
+            <select data-k="font">
+              <option value="gothic">ゴシック</option>
+              <option value="mincho">明朝</option>
+              <option value="mono">等幅</option>
+            </select>
+          </label>
+        </div>
+      </div>
+    </details>
+
+    <details open>
+      <summary>再生位置バー・秒数</summary>
+      <div>
+        <label class="check"><input type="checkbox" data-k="progressBar"> 再生位置バーを表示</label>
+        <div class="row">
+          <label>バーの見た目
+            <select data-k="barStyle">
+              <option value="thin">細線</option>
+              <option value="thick">太め（角丸）</option>
+              <option value="glow">光る＋先端の丸</option>
+            </select>
+          </label>
+          <label>位置
+            <select data-k="barPos">
+              <option value="bottom">下</option>
+              <option value="top">上</option>
+            </select>
+          </label>
+        </div>
+        <label>秒数カウンター
+          <select data-k="counter">
+            <option value="none">なし</option>
+            <option value="simple">1:22 / 2:01（右上）</option>
+            <option value="inline">1:22 ━━ 2:01（バーの両端）</option>
+            <option value="remain">残り時間 -0:39</option>
+            <option value="digital">デジタル枠 01:22.4</option>
+            <option value="bubble">先端について動く吹き出し</option>
+          </select>
+        </label>
+      </div>
+    </details>
+
+    <details id="vidSection" hidden open>
+      <summary>重ねる動画</summary>
+      <div>
+        <div class="row">
+          <label>合成方法
+            <select data-k="vidBlend">
+              <option value="source-over">通常（透明WebM向け）</option>
+              <option value="screen">スクリーン（黒背景を透かす）</option>
+              <option value="lighter">加算（明るく光らせる）</option>
+            </select>
+          </label>
+          <label>サイズ
+            <select data-k="vidFit">
+              <option value="cover">画面いっぱい</option>
+              <option value="contain">全体が収まる</option>
+            </select>
+          </label>
+        </div>
+        <label>不透明度 <input type="range" data-k="vidOpacity" min="0" max="1" step="0.05"></label>
+        <div class="note">位置・大きさ・回転は、レイヤー欄で「重ねる動画」を選んで調整します（プレビュー画面のドラッグでも動かせます）。</div>
+        <div class="row">
+          <label class="check"><input type="checkbox" data-k="vidFlipH"> 左右反転</label>
+          <label class="check"><input type="checkbox" data-k="vidFlipV"> 上下反転</label>
+        </div>
+        <label>複製
+          <select data-k="vidMirror">
+            <option value="none">しない</option>
+            <option value="h">左右対称に複製（両サイドに並べる）</option>
+            <option value="v">上下対称に複製</option>
+            <option value="both">上下左右の4つに複製</option>
+          </select>
+        </label>
+        <label>開始のずれ補正（秒） <span class="beatRow"><input type="range" data-k="vidOffset" min="-2" max="2" step="0.01"><span id="vidOffsetVal" class="status" style="min-width:3.5em">0.00</span></span></label>
+        <div class="note">「重ねる動画」はレイヤー欄で順番と揺れを設定できます。同じ曲から書き出した動画なら、補正は0のままで合います。</div>
+        <button id="vidRemove" class="small">重ねる動画を外す</button>
+      </div>
+    </details>
+
+    <div class="row">
+      <label>フレームレート
+        <select id="fps"><option value="30">30fps（軽い）</option><option value="60" selected>60fps（なめらか）</option></select>
+      </label>
+      <label>画質
+        <select id="quality"><option value="8000000">標準</option><option value="12000000" selected>高</option><option value="20000000">最高</option></select>
+      </label>
+    </div>
+    <div id="sizeNote" class="note"></div>
+    <button id="exportBtn" class="primary" disabled>⏺ 動画を書き出す</button>
+    <button id="resaveBtn" hidden>💾 もう一度保存</button>
+    <div class="note">
+      書き出しは曲と同じ長さの時間がかかります（再生しながら録画するため）。<br>
+      書き出し中はこのタブを表示したままにしてください。別タブにするとコマ落ちします。<br>
+      保存形式: MP4（ブラウザ非対応なら WebM）。どちらもそのまま YouTube に上げられます。<br>
+      Chrome / Edge で開くと、書き出し時に保存先を選べます。
+    </div>
+    <footer>
+      CoverPulse v1.0 ・ <a href="#" id="termsLink">利用規約・プライバシー</a><br>
+      画像・曲・動画はすべてこのブラウザの中で処理され、外部には送信されません。<br>
+      推奨: PC版 Chrome / Edge（最新版）
+    </footer>
+  </div>
+</div>
+<div id="overlay" class="overlay">ここにドロップ</div>
+<dialog id="terms">
+  <h2>利用規約・プライバシー</h2>
+  <p><b>プライバシー</b><br>CoverPulse は、読み込んだ画像・曲・動画をすべてお使いのブラウザの中だけで処理します。ファイルがサーバーへ送信されることはありません。テンプレートの保存にはブラウザの保存領域（localStorage）を使います。</p>
+  <p><b>作った動画</b><br>CoverPulse で作った動画は、個人・商用を問わず自由に使えます（YouTube・SNS への投稿、収益化を含む）。クレジット表記は任意です。</p>
+  <p><b>素材の権利</b><br>読み込む画像・曲の権利は、利用者ご自身で確認してください。他人の著作物を無断で使った動画の投稿などで生じた問題について、作者は責任を負いません。</p>
+  <p><b>禁止事項</b><br>このツール自体（HTMLファイル）の再配布・転売、作者を偽っての公開は禁止です。</p>
+  <p><b>免責</b><br>このツールは現状のまま提供されます。ご利用によって生じた損害について、作者は責任を負いません。</p>
+  <form method="dialog" style="text-align:right"><button>閉じる</button></form>
+</dialog>
+
+<script>
+const W = 1920, H = 1080, CX = W / 2, CY = H / 2;
+const cv = document.getElementById('cv');
+const g = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+
+// ---------- テンプレート ----------
+const BASE = {
+  bg: 'blurZoom', bgPulse: true, accent: '#4fd1ff',
+  imgShape: 'circle', imgMotion: 'static', imgSize: 540, imgBorder: true,
+  viz: 'circleBars', sens: 1.0,
+  particles: 'outward', partAmount: 160,
+  beatBand: 'kick', beatSens: 1.0, shake: 1, flash: 0.35, punch: 0,
+  overlay: 'none', textPos: 'bottomLeft', font: 'gothic', progressBar: true,
+  barStyle: 'thin', barPos: 'bottom', counter: 'none',
+  vidBlend: 'source-over', vidFit: 'cover', vidOpacity: 1, vidOffset: 0,
+  vidFlipH: false, vidFlipV: false, vidMirror: 'none',
+  stStyle: 'none', stPal: 'accent', stFit: true, stSens: 0.5, stAmount: 1, stSmooth: 0.35, stSize: 1,
+  stGlow: 1, stSpeed: 1, stDensity: 1, stOpacity: 1, stFlipH: false, stFlipV: false, stMirror: 'none',
+  // 下から順に描く。beat: ビートで揺れ・ズームパンチするか
+  layers: [
+    { id: 'bg', beat: true }, { id: 'particles', beat: true }, { id: 'viz', beat: false }, { id: 'studio', beat: false }, { id: 'studio2', beat: false }, { id: 'studio3', beat: false }, { id: 'studio4', beat: false },
+    { id: 'video', beat: false }, { id: 'image', beat: false },
+    { id: 'flash' }, { id: 'overlay', beat: false }, { id: 'text', beat: false }, { id: 'progress', beat: false }, { id: 'counter', beat: false },
+  ],
+};
+// Studio の設定キー。スロット2〜4は末尾に番号を付けたキー（stStyle2 など）に入る
+const STUDIO_KEYS = ['stStyle', 'stPal', 'stFit', 'stSens', 'stAmount', 'stSmooth', 'stSize', 'stGlow', 'stSpeed',
+                     'stDensity', 'stOpacity', 'stFlipH', 'stFlipV', 'stMirror'];
+const ST_SLOTS = 4;
+for (let i = 1; i < ST_SLOTS; i++) for (const k of STUDIO_KEYS) BASE[k + (i + 1)] = BASE[k];
+let stSlot = 0;
+const stKey = (k, slot = stSlot) => STUDIO_KEYS.includes(k) && slot ? k + (slot + 1) : k;
+const studioSlotOf = id => id === 'studio' ? 0 : /^studio\d$/.test(id) ? +id.slice(6) - 1 : -1;
+const LAYER_NAMES = { bg: '背景', particles: 'パーティクル', viz: 'ビジュアライザー', studio: 'Studio スロット1', studio2: 'Studio スロット2', studio3: 'Studio スロット3', studio4: 'Studio スロット4', video: '重ねる動画', image: '中央の画像',
+                      text: '文字', progress: '再生位置バー', counter: '秒数カウンター', overlay: '質感', flash: '⚡ フラッシュ' };
+// テンプレート用: 指定したレイヤーだけ「揺れ ON」にした配列を作る
+const beatLayers = on => BASE.layers.map(l => l.id === 'flash' ? { ...l } : { ...l, beat: on.includes(l.id) });
+const TEMPLATES = {
+  'EDM サークル': {},
+  'ハード': { bg: 'darkImage', accent: '#ff3b3b', imgShape: 'square', imgSize: 500, viz: 'circleBars', sens: 1.3,
+              partAmount: 320, shake: 1.8, flash: 0.5, punch: 1.2, overlay: 'film',
+              layers: beatLayers(['bg', 'particles', 'viz', 'image']) },
+  'ネオン': { bg: 'gradient', bgPulse: true, accent: '#ff3df2', imgSize: 480, viz: 'circleWave', sens: 1.2,
+              particles: 'bokeh', partAmount: 70, shake: 0.4, flash: 0.2, punch: 0.6, overlay: 'scanline',
+              layers: beatLayers(['bg', 'particles', 'viz']) },
+  'Lo-fi': { bg: 'blurStatic', bgPulse: false, accent: '#ffcf8a', imgShape: 'rounded', imgMotion: 'float', imgSize: 520,
+             imgBorder: false, viz: 'wave', sens: 0.8, particles: 'snow', partAmount: 110, shake: 0, flash: 0,
+             overlay: 'film', textPos: 'underImage', font: 'mincho' },
+  'チル': { bg: 'blurZoom', bgPulse: false, accent: '#8affc8', imgShape: 'rounded', imgSize: 560, imgBorder: false,
+            viz: 'bottomBars', sens: 0.9, particles: 'bokeh', partAmount: 50, shake: 0, flash: 0.08,
+            overlay: 'vignette', textPos: 'topLeft' },
+  'スタジオ HALO': { bg: 'blurZoom', accent: '#36d6b5', imgShape: 'circle', imgSize: 440, imgBorder: false, viz: 'none',
+                     stStyle: 'halo', stPal: '0', particles: 'outward', partAmount: 90, shake: 0.6, flash: 0.15 },
+  'スタジオ AURORA': { bg: 'blurStatic', bgPulse: false, accent: '#ff2bd6', imgShape: 'rounded', imgSize: 420, imgBorder: false,
+                       viz: 'none', stStyle: 'aurora', stPal: '1', particles: 'bokeh', partAmount: 50, shake: 0, flash: 0.1,
+                       textPos: 'topLeft', layers: [
+                         { id: 'bg', beat: true }, { id: 'particles', beat: true }, { id: 'viz', beat: false },
+                         { id: 'studio', beat: false, y: 330 }, { id: 'video', beat: false }, { id: 'image', beat: false, y: -90 },
+                         { id: 'flash' }, { id: 'overlay', beat: false }, { id: 'text', beat: false },
+                         { id: 'progress', beat: false }, { id: 'counter', beat: false }] },
+  'EDM + AURORA': { imgSize: 420, viz: 'circleBars', stStyle: 'aurora', stPal: '1', accent: '#00e5ff', partAmount: 120,
+                    layers: [
+                      { id: 'bg', beat: true }, { id: 'particles', beat: true }, { id: 'viz', beat: false, y: -90 },
+                      { id: 'studio', beat: false, y: 380 }, { id: 'studio2', beat: false }, { id: 'video', beat: false },
+                      { id: 'image', beat: false, y: -90 }, { id: 'flash' }, { id: 'overlay', beat: false },
+                      { id: 'text', beat: false }, { id: 'progress', beat: false }, { id: 'counter', beat: false }] },
+  'HALO + AURORA': { bg: 'blurZoom', accent: '#36d6b5', imgShape: 'circle', imgSize: 380, imgBorder: false, viz: 'none',
+                     stStyle: 'halo', stPal: '0', stStyle2: 'aurora', stPal2: '1', particles: 'outward', partAmount: 80,
+                     shake: 0.5, flash: 0.12, textPos: 'topLeft',
+                     layers: [
+                       { id: 'bg', beat: true }, { id: 'particles', beat: true }, { id: 'viz', beat: false },
+                       { id: 'studio2', beat: false, y: 390 }, { id: 'studio', beat: false }, { id: 'video', beat: false },
+                       { id: 'image', beat: false, y: -100 }, { id: 'flash' }, { id: 'overlay', beat: false },
+                       { id: 'text', beat: false }, { id: 'progress', beat: false }, { id: 'counter', beat: false }] },
+  'ミニマル': { bg: 'black', bgPulse: false, accent: '#ffffff', imgShape: 'original', imgSize: 560, imgBorder: false,
+                viz: 'bottomBars', sens: 0.9, particles: 'none', shake: 0, flash: 0, textPos: 'topLeft', progressBar: false },
+};
+const S = { ...BASE };
+const LS_KEY = 'mvmaker.templates';
+
+function loadMyTemplates() { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch { return {}; } }
+function saveMyTemplates(t) { try { localStorage.setItem(LS_KEY, JSON.stringify(t)); return true; } catch { return false; } }
+
+// 古い保存データなどで欠けたレイヤーがあれば補う
+function normalizeLayers(list) {
+  const out = (list || []).filter(l => LAYER_NAMES[l.id]).map(l => ({ x: 0, y: 0, sc: 1, rot: 0, ...l }));
+  BASE.layers.forEach((l, i) => { if (!out.some(o => o.id === l.id)) out.splice(Math.min(i, out.length), 0, { x: 0, y: 0, sc: 1, rot: 0, ...l }); });
+  return out;
+}
+
+function applySettings(obj) {
+  Object.assign(S, BASE, obj);
+  S.layers = normalizeLayers(obj.layers || BASE.layers);
+  // 以前の保存データ（重ねる動画だけに配置があった頃）からの引き継ぎ
+  if (obj.vidX !== undefined) Object.assign(layerById('video'), { x: obj.vidX || 0, y: obj.vidY || 0, sc: obj.vidScale || 1, rot: obj.vidRot || 0 });
+  buildLayerUI();
+  updateXformUI();
+  for (const el of document.querySelectorAll('[data-k]')) {
+    const k = stKey(el.dataset.k);
+    if (el.type === 'checkbox') el.checked = !!S[k]; else el.value = S[k];
+  }
+  document.documentElement.style.setProperty('--accent', S.accent);
+  particles = [];
+  stSlots.forEach(sl => sl.state = {});
+  syncStudioUI();
+}
+
+// Studio 欄の表示を、選択中のスロットの設定に合わせる
+function syncStudioUI() {
+  for (const el of document.querySelectorAll('[data-k]')) {
+    if (!STUDIO_KEYS.includes(el.dataset.k)) continue;
+    const k = stKey(el.dataset.k);
+    if (el.type === 'checkbox') el.checked = !!S[k]; else el.value = S[k];
+  }
+  $('stOpts').hidden = S[stKey('stStyle')] === 'none';
+  const box = $('stSlots');
+  box.innerHTML = '';
+  stSlots.forEach((_, i) => {
+    const b = document.createElement('button');
+    const st = S[stKey('stStyle', i)];
+    b.textContent = 'スロット' + (i + 1) + '：' + (st === 'none' ? 'なし' : st.toUpperCase());
+    b.classList.toggle('on', i === stSlot);
+    b.onclick = () => { stSlot = i; syncStudioUI(); };
+    box.appendChild(b);
+  });
+}
+
+function buildTemplateUI() {
+  const box = $('tpls');
+  box.innerHTML = '';
+  for (const name of Object.keys(TEMPLATES)) {
+    const b = document.createElement('button');
+    b.textContent = name;
+    b.onclick = () => { applySettings(TEMPLATES[name]); markTpl(b); $('myTpl').value = ''; };
+    box.appendChild(b);
+  }
+  const sel = $('myTpl');
+  sel.length = 1;
+  for (const name of Object.keys(loadMyTemplates())) sel.add(new Option(name, name));
+}
+let dragFrom = -1, selLayer = 'image';
+const layerById = id => S.layers.find(l => l.id === id);
+function selectLayer(id) { selLayer = id; buildLayerUI(); updateXformUI(); }
+function updateXformUI() {
+  const L = layerById(selLayer);
+  const none = !L || L.id === 'flash';
+  $('xform').hidden = none; $('xformNone').hidden = !none;
+  cv.classList.toggle('movable', !none);
+  if (none) return;
+  $('xfName').textContent = LAYER_NAMES[L.id];
+  for (const el of document.querySelectorAll('[data-x]')) el.value = L[el.dataset.x];
+  for (const el of document.querySelectorAll('[data-xv]')) {
+    const v = L[el.dataset.xv];
+    el.textContent = el.dataset.xv === 'rot' ? v + '°' : el.dataset.xv === 'sc' ? v.toFixed(2) + '×' : v;
+  }
+}
+function buildLayerUI() {
+  const box = $('layers');
+  box.innerHTML = '';
+  const n = S.layers.length;
+  // 表示は上が手前（配列の末尾）
+  for (let vi = 0; vi < n; vi++) {
+    const idx = n - 1 - vi, L = S.layers[idx];
+    const row = document.createElement('div');
+    row.className = 'layer' + (L.id === 'flash' ? ' flashLayer' : '') + (L.id === selLayer ? ' sel' : '');
+    row.onclick = e => { if (!e.target.closest('button')) selectLayer(L.id); };
+    row.draggable = true;
+    row.innerHTML = '<span class="grip">⋮⋮</span><span class="name">' + LAYER_NAMES[L.id] + '</span>';
+    if (L.id !== 'flash') {
+      const chip = document.createElement('button');
+      chip.className = 'chip' + (L.beat ? ' on' : '');
+      chip.textContent = L.beat ? '揺れ ON' : '揺れ OFF';
+      chip.onclick = () => { L.beat = !L.beat; markTpl(null); buildLayerUI(); };
+      row.appendChild(chip);
+    }
+    const arrows = document.createElement('span');
+    arrows.className = 'arrows';
+    const up = document.createElement('button'), down = document.createElement('button');
+    up.textContent = '▲'; down.textContent = '▼';
+    up.disabled = idx === n - 1; down.disabled = idx === 0;
+    up.onclick = () => moveLayer(idx, idx + 1);
+    down.onclick = () => moveLayer(idx, idx - 1);
+    arrows.append(up, down);
+    row.appendChild(arrows);
+    row.addEventListener('dragstart', e => { dragFrom = idx; row.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'layer'); });
+    row.addEventListener('dragend', () => { dragFrom = -1; row.classList.remove('dragging'); });
+    row.addEventListener('dragover', e => { if (dragFrom >= 0) { e.preventDefault(); e.stopPropagation(); } });
+    row.addEventListener('drop', e => { if (dragFrom < 0) return; e.preventDefault(); e.stopPropagation(); moveLayer(dragFrom, idx); });
+    box.appendChild(row);
+  }
+}
+function moveLayer(from, to) {
+  if (from === to || to < 0 || to >= S.layers.length) return;
+  const [L] = S.layers.splice(from, 1);
+  S.layers.splice(to, 0, L);
+  markTpl(null);
+  buildLayerUI();
+}
+
+function markTpl(btn) { for (const b of $('tpls').children) b.classList.toggle('on', b === btn); }
+
+$('myTpl').onchange = e => { const t = loadMyTemplates()[e.target.value]; if (t) { applySettings(t); markTpl(null); } };
+$('saveTpl').onclick = () => {
+  const name = prompt('テンプレート名', $('myTpl').value || '');
+  if (!name) return;
+  const t = loadMyTemplates(); t[name] = JSON.parse(JSON.stringify(S));
+  if (!saveMyTemplates(t)) { setStatus('保存できませんでした（ブラウザの保存領域が使えません）'); return; }
+  buildTemplateUI(); $('myTpl').value = name; setStatus('テンプレート「' + name + '」を保存しました');
+};
+$('delTpl').onclick = () => {
+  const name = $('myTpl').value; if (!name) return;
+  if (!confirm('「' + name + '」を削除しますか？')) return;
+  const t = loadMyTemplates(); delete t[name]; saveMyTemplates(t); buildTemplateUI();
+};
+
+for (const el of document.querySelectorAll('[data-k]')) {
+  el.addEventListener('input', () => {
+    const k = el.dataset.k;
+    S[stKey(k)] = el.type === 'checkbox' ? el.checked : (el.type === 'range' ? +el.value : el.value);
+    if (k === 'accent') document.documentElement.style.setProperty('--accent', S.accent);
+    if (k === 'particles') particles = [];
+    if (k === 'stStyle') { stSlots[stSlot].state = {}; syncStudioUI(); }
+    markTpl(null);
+  });
+}
+
+// ---------- Visualizer Studio（C:\Users\sound\dev\Visualizer から取り込み） ----------
+const Studio = (() => {
+function makeFFT(N) {
+  const rev = new Uint32Array(N), bits = Math.log2(N);
+  for (let i = 0; i < N; i++) {
+    let r = 0;
+    for (let b = 0; b < bits; b++) r |= ((i >> b) & 1) << (bits - 1 - b);
+    rev[i] = r;
+  }
+  const cs = new Float32Array(N / 2), sn = new Float32Array(N / 2);
+  for (let i = 0; i < N / 2; i++) { cs[i] = Math.cos(2 * Math.PI * i / N); sn[i] = Math.sin(2 * Math.PI * i / N); }
+  return (re, im) => {
+    for (let i = 0; i < N; i++) {
+      const j = rev[i];
+      if (j > i) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
+    }
+    for (let size = 2; size <= N; size *= 2) {
+      const half = size / 2, step = N / size;
+      for (let i = 0; i < N; i += size) {
+        for (let j = i, k = 0; j < i + half; j++, k += step) {
+          const l = j + half;
+          const tr = re[l] * cs[k] + im[l] * sn[k];
+          const ti = -re[l] * sn[k] + im[l] * cs[k];
+          re[l] = re[j] - tr; im[l] = im[j] - ti;
+          re[j] += tr; im[j] += ti;
+        }
+      }
+    }
+  };
+}
+
+class Analyzer {
+  constructor(buffer) {
+    this.sr = buffer.sampleRate;
+    const n = buffer.length, chs = buffer.numberOfChannels;
+    this.data = new Float32Array(n);
+    for (let c = 0; c < chs; c++) {
+      const d = buffer.getChannelData(c);
+      for (let i = 0; i < n; i++) this.data[i] += d[i] / chs;
+    }
+    this.N = 4096;
+    this.fft = makeFFT(this.N);
+    this.win = new Float32Array(this.N);
+    for (let i = 0; i < this.N; i++) this.win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / this.N);
+    this.re = new Float32Array(this.N); this.im = new Float32Array(this.N);
+    this.nb = 96;
+    const fmin = 30, fmax = 16000, binHz = this.sr / this.N;
+    this.bandBins = [];
+    for (let b = 0; b < this.nb; b++) {
+      const f0 = fmin * Math.pow(fmax / fmin, b / this.nb), f1 = fmin * Math.pow(fmax / fmin, (b + 1) / this.nb);
+      const fc = Math.sqrt(f0 * f1);
+      this.bandBins.push({ k0: Math.floor(f0 / binHz), k1: Math.floor(f1 / binHz), c: fc / binHz, fc });
+    }
+    this.raw = new Float32Array(this.nb);
+    this.db = new Float32Array(this.nb);
+    this.calibrate(buffer.duration);
+    this.reset();
+  }
+  // 曲全体をざっと調べて、帯域ごとの「大きいときのレベル」を基準にする
+  // (マスタリングの音量や曲調に関係なく、ちょうどよく動くように)
+  calibrate(duration) {
+    const n = Math.max(1, Math.min(500, Math.floor(duration * 8)));
+    const per = Array.from({ length: this.nb }, () => new Float32Array(n));
+    for (let i = 0; i < n; i++) {
+      const db = this.computeDb((i + 0.5) / n * duration);
+      for (let b = 0; b < this.nb; b++) per[b][i] = db[b];
+    }
+    const pct = (arr, q) => { const s = Float32Array.from(arr).sort(); return s[Math.min(s.length - 1, Math.floor(q * s.length))]; };
+    let ref = new Float32Array(this.nb), all = [];
+    for (let b = 0; b < this.nb; b++) { ref[b] = pct(per[b], 0.97); all.push(ref[b]); }
+    const top = pct(all, 0.9);
+    // 無音に近い帯域は持ち上げすぎない (全体の上位から 18dB 以内に収める)
+    for (let b = 0; b < this.nb; b++) ref[b] = Math.max(ref[b], top - 18);
+    this.ref = smoothArr(ref, 3);
+  }
+  computeDb(t) {
+    const N = this.N, start = Math.floor(t * this.sr) - N / 2, d = this.data;
+    for (let i = 0; i < N; i++) {
+      const j = start + i;
+      this.re[i] = (j >= 0 && j < d.length ? d[j] : 0) * this.win[i];
+      this.im[i] = 0;
+    }
+    this.fft(this.re, this.im);
+    const norm = 4 / N;
+    const mag = k => Math.hypot(this.re[k], this.im[k]) * norm;
+    for (let b = 0; b < this.nb; b++) {
+      const { k0, k1, c } = this.bandBins[b];
+      let m;
+      if (k1 > k0) { m = 0; for (let k = k0 + 1; k <= k1; k++) m = Math.max(m, mag(k)); }
+      else { const a = Math.floor(c), f = c - a; m = mag(a) * (1 - f) + mag(a + 1) * f; }
+      this.db[b] = 20 * Math.log10(m + 1e-9);
+    }
+    return this.db;
+  }
+  reset() {
+    this.bands = new Float32Array(this.nb);
+    this.history = [];
+    this.bass = 0; this.mid = 0; this.high = 0; this.level = 0;
+    this.fluxAvg = 0; this.prevLow = new Float32Array(10); this.beat = 0; this.sinceBeat = 9; this.onset = false;
+  }
+  // 時刻 t のバンド値 (0〜1)。基準レベルで 0.9 くらい、そこから 36dB 下で 0
+  compute(t, sens) {
+    const db = this.computeDb(t), range = 36, lift = (sens - 0.5) * 16;
+    for (let b = 0; b < this.nb; b++) {
+      const v = Math.min(1, Math.max(0, (db[b] - this.ref[b] + lift + range * 0.9) / range));
+      this.raw[b] = Math.pow(v, 1.6);
+    }
+    return this.raw;
+  }
+  step(t, dt, o) {
+    const raw = this.compute(t, o.sens);
+    const up = 1 - Math.exp(-dt / 0.025), down = 1 - Math.exp(-dt / (0.06 + o.smooth * 0.5));
+    let bass = 0, mid = 0, high = 0, lvl = 0;
+    for (let b = 0; b < this.nb; b++) {
+      const v = this.bands[b], r = raw[b];
+      this.bands[b] = v + (r - v) * (r > v ? up : down);
+      if (b < 14) bass += raw[b]; else if (b < 60) mid += raw[b]; else high += raw[b];
+      lvl += raw[b];
+    }
+    bass /= 14; mid /= 46; high /= 36; lvl /= this.nb;
+    const k = 1 - Math.exp(-dt / 0.08);
+    this.bass += (bass - this.bass) * k; this.mid += (mid - this.mid) * k;
+    this.high += (high - this.high) * k; this.level += (lvl - this.level) * k;
+    // キックの検出: 低音域の「立ち上がり量」(前のフレームから増えた分) が、最近の平均より十分大きいとき
+    let flux = 0;
+    for (let b = 0; b < 10; b++) flux += Math.max(0, raw[b] - this.prevLow[b]);
+    flux /= 10;
+    for (let b = 0; b < 10; b++) this.prevLow[b] = raw[b];
+    this.sinceBeat += dt;
+    this.onset = false;
+    if (dt > 0 && flux > this.fluxAvg * 2.8 + 0.05 && bass > 0.2 && this.sinceBeat > 0.28) {
+      this.onset = true; this.beat = 1; this.sinceBeat = 0;
+    } else this.beat *= Math.exp(-dt / 0.22);
+    if (dt > 0) this.fluxAvg += (flux - this.fluxAvg) * (1 - Math.exp(-dt / 0.5));
+    this.history.unshift(Float32Array.from(this.bands));
+    if (this.history.length > 24) this.history.pop();
+    return this;
+  }
+}
+
+// ============================================================================
+// 描画の道具
+// ============================================================================
+const PALETTES = [
+  { name: "Aurora", c: ["#36d6b5", "#5aa9ff", "#a596ff"] },
+  { name: "Neon", c: ["#00e5ff", "#ff2bd6", "#7a5cff"] },
+  { name: "Sunset", c: ["#ffb347", "#ff5c8a", "#ffd27a"] },
+  { name: "Sakura", c: ["#ffb7d5", "#c9a0ff", "#fff0f6"] },
+  { name: "Gold", c: ["#ffd27a", "#ff9f43", "#fff1c9"] },
+  { name: "Mono", c: ["#ffffff", "#c8d0e0", "#8a94a8"] },
+];
+const hex = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+function palColor(pal, x, a = 1) {
+  const cs = pal.c.map(hex), n = cs.length - 1;
+  x = Math.min(1, Math.max(0, x)) * n;
+  const i = Math.min(n - 1, Math.floor(x)), f = x - i;
+  const c = cs[i].map((v, k) => Math.round(v + (cs[i + 1][k] - v) * f));
+  return `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+}
+function rgba(h, a) { const c = hex(h); return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
+
+// バンドを M 個に間引く (0..maxBand の範囲を補間)
+function resample(bands, M, maxBand = bands.length) {
+  const out = new Float32Array(M);
+  for (let i = 0; i < M; i++) {
+    const p = i / (M - 1) * (maxBand - 1), a = Math.floor(p), f = p - a;
+    out[i] = bands[a] * (1 - f) + bands[Math.min(maxBand - 1, a + 1)] * f;
+  }
+  return out;
+}
+function smoothArr(v, passes = 1, closed = false) {
+  let a = v;
+  for (let p = 0; p < passes; p++) {
+    const b = new Float32Array(a.length), n = a.length;
+    for (let i = 0; i < n; i++) {
+      const l = closed ? a[(i - 1 + n) % n] : a[Math.max(0, i - 1)], r = closed ? a[(i + 1) % n] : a[Math.min(n - 1, i + 1)];
+      b[i] = (l + 2 * a[i] + r) / 4;
+    }
+    a = b;
+  }
+  return a;
+}
+// 点列をなめらかな曲線にする (Catmull-Rom)
+function smoothPath(pts, closed) {
+  const p = new Path2D(), n = pts.length;
+  if (n < 2) return p;
+  const at = i => closed ? pts[(i + n) % n] : pts[Math.max(0, Math.min(n - 1, i))];
+  p.moveTo(pts[0][0], pts[0][1]);
+  const last = closed ? n : n - 1;
+  for (let i = 0; i < last; i++) {
+    const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+    p.bezierCurveTo(p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6,
+                    p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6, p2[0], p2[1]);
+  }
+  if (closed) p.closePath();
+  return p;
+}
+// 光る線: 太く薄い線を重ねてから、芯を描く
+function glowStroke(ctx, path, color, width, glow) {
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.lineJoin = ctx.lineCap = "round";
+  if (glow > 0) {
+    ctx.strokeStyle = color.replace(/[\d.]+\)$/, `${0.05 * glow})`); ctx.lineWidth = width * 9; ctx.stroke(path);
+    ctx.strokeStyle = color.replace(/[\d.]+\)$/, `${0.12 * glow})`); ctx.lineWidth = width * 4; ctx.stroke(path);
+  }
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke(path);
+  ctx.restore();
+}
+function mulberry32(a) {
+  return () => {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function drawCenterImage(ctx, img, cx, cy, r) {
+  if (!img) return;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.clip();
+  const s = Math.max(2 * r / img.width, 2 * r / img.height);
+  ctx.drawImage(img, cx - img.width * s / 2, cy - img.height * s / 2, img.width * s, img.height * s);
+  ctx.restore();
+}
+
+// ============================================================================
+// スタイル。それぞれ draw(ctx, W, H, A, o, S) で、S はスタイルごとの状態 (粒子など)
+//  A: 解析結果 / o: 設定 (size x y amount glow speed density pal img time dt)
+// ============================================================================
+const STYLES = [
+  {
+    id: "halo", name: "HALO", jp: "円形・放射。光の輪が鼓動する",
+    draw(ctx, W, H, A, o, S) {
+      const u = Math.min(W, H) / 1000, cx = W * o.x, cy = H * o.y, R = 210 * u * o.size;
+      const r0 = R * (1 + 0.07 * A.beat * o.amount + 0.03 * A.bass * o.amount);
+      const M = 56;
+      const ring = (bands, scale) => {
+        const half = smoothArr(resample(bands, M, 80), 2);
+        const pts = [];
+        for (let i = 0; i < 2 * M; i++) {
+          const idx = i < M ? i : 2 * M - 1 - i;   // 左右対称 (上が低音)
+          const ang = -Math.PI / 2 + (i + 0.5) / (2 * M) * Math.PI * 2;
+          const r = r0 + 4 * u + half[idx] * R * scale * o.amount;
+          pts.push([cx + Math.cos(ang) * r, cy + Math.sin(ang) * r]);
+        }
+        return smoothPath(pts, true);
+      };
+      const lag = A.history[Math.min(5, A.history.length - 1)] || A.bands;
+
+      // 外側のやわらかい光
+      const outer = ring(A.bands, 0.62);
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      const g = ctx.createRadialGradient(cx, cy, r0, cx, cy, r0 + R * 0.7);
+      g.addColorStop(0, palColor(o.pal, 0.2, 0.32 * o.glow)); g.addColorStop(1, palColor(o.pal, 1, 0));
+      ctx.fillStyle = g;
+      const holed = new Path2D(outer); holed.arc(cx, cy, r0, 0, Math.PI * 2, true);
+      ctx.fill(holed, "evenodd");
+      ctx.restore();
+      glowStroke(ctx, outer, palColor(o.pal, 0.5, 0.9), 2.2 * u, o.glow);
+      glowStroke(ctx, ring(lag, 0.36), palColor(o.pal, 0, 0.95), 2.6 * u, o.glow);
+
+      // 内向きの細い線
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      const T = 144, vals = resample(A.bands, T / 2, 80);
+      ctx.lineWidth = 1.4 * u; ctx.lineCap = "round";
+      for (let i = 0; i < T; i++) {
+        const idx = i < T / 2 ? i : T - 1 - i, v = vals[idx];
+        const ang = -Math.PI / 2 + (i + 0.5) / T * Math.PI * 2, c = Math.cos(ang), s = Math.sin(ang);
+        const a = r0 - 10 * u, b = a - (6 + v * 46 * o.amount) * u;
+        ctx.strokeStyle = palColor(o.pal, 1, 0.25 + 0.6 * v);
+        ctx.beginPath(); ctx.moveTo(cx + c * a, cy + s * a); ctx.lineTo(cx + c * b, cy + s * b); ctx.stroke();
+      }
+      // 基準の円
+      ctx.strokeStyle = `rgba(255,255,255,${0.35 + 0.4 * A.beat})`; ctx.lineWidth = 1.5 * u;
+      ctx.beginPath(); ctx.arc(cx, cy, r0, 0, Math.PI * 2); ctx.stroke();
+
+      // 回る点の輪と弧 (HUD風)
+      const rot = o.time * 0.12;
+      const rd = R * 1.68 * (1 + 0.02 * A.beat);
+      for (let i = 0; i < 96; i++) {
+        const ang = rot + i / 96 * Math.PI * 2;
+        const pulse = 0.5 + 0.5 * Math.sin(i * 0.9 + o.time * 2.0);
+        const rr = (1.3 + pulse * Math.max(A.high, A.mid * 0.7) * 3.2 * o.amount) * u;
+        ctx.fillStyle = palColor(o.pal, i / 96, 0.45 + 0.5 * pulse * Math.max(A.high, A.mid));
+        ctx.beginPath(); ctx.arc(cx + Math.cos(ang) * rd, cy + Math.sin(ang) * rd, rr, 0, Math.PI * 2); ctx.fill();
+      }
+      const ra = R * 1.42;
+      ctx.lineWidth = 2 * u;
+      [[0, 0.7], [2.2, 0.35], [3.6, 1.1], [5.2, 0.2]].forEach(([st, len], i) => {
+        const a0 = st - o.time * 0.22 * (i % 2 ? -1 : 1);
+        ctx.strokeStyle = palColor(o.pal, i / 3, 0.4 + 0.5 * A.mid);
+        ctx.beginPath(); ctx.arc(cx, cy, ra + (i % 2) * 7 * u, a0, a0 + len); ctx.stroke();
+      });
+      ctx.restore();
+
+      // キックで広がる波紋
+      S.waves = S.waves || [];
+      if (A.onset) S.waves.push(0);
+      S.waves = S.waves.map(a => a + o.dt).filter(a => a < 1.1);
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      for (const a of S.waves) {
+        const k = a / 1.1;
+        ctx.strokeStyle = palColor(o.pal, 0.3, (1 - k) * 0.5 * o.glow);
+        ctx.lineWidth = (3 - 2.4 * k) * u;
+        ctx.beginPath(); ctx.arc(cx, cy, r0 + k * R * 1.5, 0, Math.PI * 2); ctx.stroke();
+      }
+      ctx.restore();
+      drawCenterImage(ctx, o.img, cx, cy, r0 - 2 * u);
+    },
+  },
+  {
+    id: "aurora", name: "AURORA", jp: "ネオンの波。重なる光のリボン",
+    draw(ctx, W, H, A, o, S) {
+      const u = Math.min(W, H) / 1000, cx = W * o.x, cy = H * o.y;
+      const Wd = Math.min(W * 0.86, 1500 * u) * o.size, x0 = cx - Wd / 2, Amp = 230 * u * o.size;
+      const P = 96, L = 5;
+      // 中央が低音、両端に向かって高音 (左右対称)
+      const lineFor = (bands, k) => {
+        const half = smoothArr(resample(bands, P / 2, 84), 2);
+        const pts = [];
+        for (let i = 0; i < P; i++) {
+          const x = i / (P - 1), d = Math.abs(x - 0.5) * 2;
+          // 層ごとに、山の位置を少しずつ外側へずらす (リボンが広がって重なる)
+          const p = d * (P / 2 - 1) * (1 - k * 0.07), a = Math.floor(p), f = p - a;
+          const v = half[a] * (1 - f) + half[Math.min(P / 2 - 1, a + 1)] * f;
+          const taper = Math.pow(Math.sin(Math.PI * x), 1.4);
+          const wob = Math.sin(x * (7 + k * 2) + o.time * (1.1 + k * 0.25) + k * 1.7) * (5 + 14 * A.mid) * (1 + k * 0.6) * u;
+          pts.push([x0 + x * Wd, cy - (v * Amp * (1 - k * 0.09) * o.amount + wob) * taper]);
+        }
+        return pts;
+      };
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      for (let k = L - 1; k >= 0; k--) {
+        const bands = A.history[Math.min(k * 2, A.history.length - 1)] || A.bands;
+        const pts = lineFor(bands, k), col = palColor(o.pal, k / (L - 1), k === 0 ? 1 : 0.75 - k * 0.1);
+        const path = smoothPath(pts, false);
+        if (k === 0) {
+          // 一番手前の線の下を、うっすら塗る
+          const fill = new Path2D(path);
+          fill.lineTo(x0 + Wd, cy); fill.lineTo(x0, cy); fill.closePath();
+          const g = ctx.createLinearGradient(0, cy - Amp, 0, cy);
+          g.addColorStop(0, palColor(o.pal, 0, 0.0)); g.addColorStop(1, palColor(o.pal, 0, 0.22 * o.glow));
+          ctx.fillStyle = g; ctx.fill(fill);
+        }
+        glowStroke(ctx, path, col, (k === 0 ? 2.6 : 1.6) * u, o.glow * (k === 0 ? 1 : 0.6));
+        // 映り込み
+        const refl = smoothPath(pts.map(([x, y]) => [x, cy + (cy - y) * 0.45]), false);
+        ctx.strokeStyle = palColor(o.pal, k / (L - 1), 0.16); ctx.lineWidth = 1.4 * u; ctx.stroke(refl);
+      }
+      // 高音のきらめき
+      const top = lineFor(A.bands, 0);
+      for (let i = 2; i < P - 2; i += 3) {
+        const d = Math.abs(i / (P - 1) - 0.5) * 2;
+        if (d < 0.45) continue;
+        const v = A.high * (0.5 + 0.5 * Math.sin(i * 12.9 + o.time * 7));
+        if (v < 0.25) continue;
+        ctx.fillStyle = `rgba(255,255,255,${Math.min(0.9, v)})`;
+        ctx.beginPath(); ctx.arc(top[i][0], top[i][1] - 6 * u, (1 + 2 * v) * u, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.strokeStyle = "rgba(255,255,255,0.18)"; ctx.lineWidth = 1 * u;
+      ctx.beginPath(); ctx.moveTo(x0, cy); ctx.lineTo(x0 + Wd, cy); ctx.stroke();
+      ctx.restore();
+    },
+  },
+  {
+    id: "stardust", name: "STARDUST", jp: "粒子。低音で光の粒が弾ける",
+    reset(S) { S.parts = []; S.rng = mulberry32(7); S.acc = 0; },
+    draw(ctx, W, H, A, o, S) {
+      if (!S.parts) this.reset(S);
+      const u = Math.min(W, H) / 1000, cx = W * o.x, cy = H * o.y;
+      const Re = 150 * u * o.size * (1 + 0.06 * A.beat * o.amount), rnd = S.rng;
+      const M = 48, vals = resample(A.bands, M, 80);
+      // 生まれる数: ふだんは音量に比例、キックでまとめて
+      S.acc += (30 + 520 * A.level * o.amount) * o.density * o.dt;
+      let spawn = Math.floor(S.acc); S.acc -= spawn;
+      if (A.onset) spawn += Math.round(140 * o.density * o.amount);
+      for (let n = 0; n < spawn && S.parts.length < 4000; n++) {
+        const k = Math.floor(rnd() * M), side = rnd() < 0.5 ? -1 : 1;
+        const ang = -Math.PI / 2 + side * (k + rnd()) / M * Math.PI;
+        const v = vals[k], sp = (50 + v * 420 * o.amount + (A.onset ? 160 : 0) * rnd()) * u * o.size;
+        S.parts.push({
+          x: cx + Math.cos(ang) * Re, y: cy + Math.sin(ang) * Re,
+          vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+          life: 0, max: 1.2 + rnd() * 1.8, size: (0.8 + rnd() * 2.4) * u * (0.6 + v), col: k / M,
+        });
+      }
+      const drag = Math.exp(-o.dt * 0.7), dt = o.dt;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      const alive = [];
+      for (const p of S.parts) {
+        p.life += dt;
+        if (p.life > p.max) continue;
+        // ゆるい渦
+        const dx = p.x - cx, dy = p.y - cy, d = Math.hypot(dx, dy) + 1e-3;
+        p.vx = p.vx * drag - dy / d * 22 * u * dt * 10; p.vy = p.vy * drag + dx / d * 22 * u * dt * 10;
+        p.x += p.vx * dt; p.y += p.vy * dt;
+        const k = p.life / p.max, a = Math.min(1, k * 8) * (1 - k) * (1 - k);
+        const r = p.size * (1 + 1.5 * A.high);
+        ctx.fillStyle = palColor(o.pal, p.col, a * 0.18 * o.glow);
+        ctx.beginPath(); ctx.arc(p.x, p.y, r * 3.2, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = palColor(o.pal, p.col, a);
+        ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+        alive.push(p);
+      }
+      S.parts = alive;
+      // 中心の光と輪
+      const g = ctx.createRadialGradient(cx, cy, Re * 0.5, cx, cy, Re * 1.9);
+      g.addColorStop(0, palColor(o.pal, 0, 0.0)); g.addColorStop(0.45, palColor(o.pal, 0, (0.1 + 0.25 * A.bass) * o.glow));
+      g.addColorStop(1, palColor(o.pal, 0.5, 0));
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, Re * 1.9, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = `rgba(255,255,255,${0.3 + 0.4 * A.beat})`; ctx.lineWidth = 1.4 * u;
+      ctx.beginPath(); ctx.arc(cx, cy, Re, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+      drawCenterImage(ctx, o.img, cx, cy, Re - 3 * u);
+    },
+  },
+  {
+    id: "matrix", name: "MATRIX", jp: "ミニマル。光る点の格子",
+    draw(ctx, W, H, A, o, S) {
+      const u = Math.min(W, H) / 1000, cx = W * o.x, cy = H * o.y;
+      const C = 48, R = 16;
+      const Wd = Math.min(W * 0.8, 1300 * u) * o.size, sx = Wd / C, sy = sx * 0.9, Hd = sy * R;
+      const x0 = cx - Wd / 2 + sx / 2, yb = cy + Hd / 2;
+      const vals = smoothArr(resample(A.bands, C, 88), 1);
+      S.peaks = S.peaks || new Float32Array(C);
+      const dr = Math.min(sx, sy) * 0.27;
+      ctx.save();
+      for (let c = 0; c < C; c++) {
+        const v = Math.min(1, vals[c] * o.amount * 1.1), lit = v * R;
+        S.peaks[c] = Math.max(lit, S.peaks[c] - o.dt * 9);
+        const x = x0 + c * sx;
+        for (let r = 0; r < R; r++) {
+          const y = yb - r * sy - sy / 2;
+          if (r < Math.floor(lit)) {
+            ctx.globalCompositeOperation = "lighter";
+            const col = palColor(o.pal, r / (R - 1) * 0.6);
+            ctx.fillStyle = col.replace(/[\d.]+\)$/, `${0.16 * o.glow})`);
+            ctx.beginPath(); ctx.arc(x, y, dr * 2.4, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = col;
+          } else {
+            ctx.globalCompositeOperation = "source-over";
+            const frac = r < lit ? lit - r : 0;
+            ctx.fillStyle = frac > 0 ? palColor(o.pal, r / (R - 1) * 0.6, 0.15 + 0.85 * frac) : "rgba(255,255,255,0.07)";
+          }
+          ctx.beginPath(); ctx.arc(x, y, dr, 0, Math.PI * 2); ctx.fill();
+        }
+        // ピーク
+        const pr = Math.min(R - 1, Math.floor(S.peaks[c]));
+        if (S.peaks[c] > 0.6) {
+          ctx.globalCompositeOperation = "lighter";
+          ctx.fillStyle = palColor(o.pal, 1, 0.95);
+          ctx.beginPath(); ctx.arc(x, yb - pr * sy - sy / 2, dr * 1.15, 0, Math.PI * 2); ctx.fill();
+        }
+        // 映り込み
+        ctx.globalCompositeOperation = "source-over";
+        for (let r = 0; r < Math.min(4, Math.floor(lit)); r++) {
+          ctx.fillStyle = palColor(o.pal, 0, 0.1 * (1 - r / 4));
+          ctx.beginPath(); ctx.arc(x, yb + 10 * u + r * sy + sy / 2, dr * 0.9, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      ctx.globalCompositeOperation = "source-over";
+      ctx.strokeStyle = "rgba(255,255,255,0.22)"; ctx.lineWidth = 1 * u;
+      ctx.beginPath(); ctx.moveTo(x0 - sx / 2, yb + 5 * u); ctx.lineTo(x0 + Wd - sx / 2, yb + 5 * u); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.4)";
+      ctx.font = `500 ${11 * u}px Montserrat, sans-serif`; ctx.textAlign = "center";
+      [["60", 0.1], ["250", 0.33], ["1k", 0.55], ["4k", 0.77], ["16k", 0.99]].forEach(([t, p]) =>
+        ctx.fillText(t, x0 - sx / 2 + Wd * p, yb + 5 * u - Hd - 10 * u));
+      ctx.restore();
+    },
+  },
+  {
+    id: "prism", name: "PRISM", jp: "幾何学。重なる多角形が呼吸する",
+    draw(ctx, W, H, A, o, S) {
+      const u = Math.min(W, H) / 1000, cx = W * o.x, cy = H * o.y;
+      const sides = [3, 4, 5, 6, 8, 12], G = sides.length;
+      const groups = [];
+      for (let g = 0; g < G; g++) {
+        let s = 0; const a = Math.floor(g * 84 / G), b = Math.floor((g + 1) * 84 / G);
+        for (let i = a; i < b; i++) s += A.bands[i];
+        groups.push(s / (b - a));
+      }
+      const base = 95 * u * o.size, step = 44 * u * o.size;
+      const verts = [];
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      for (let k = 0; k < G; k++) {
+        const e = groups[k] * o.amount, n = sides[k];
+        const r = (base + k * step) * (1 + e * 0.32 + A.beat * 0.05 * o.amount);
+        const rot = o.time * (0.12 + k * 0.035) * (k % 2 ? 1 : -1) + e * 0.4 - Math.PI / 2;
+        const pts = [];
+        for (let i = 0; i < n; i++) pts.push([cx + Math.cos(rot + i / n * Math.PI * 2) * r, cy + Math.sin(rot + i / n * Math.PI * 2) * r]);
+        verts.push(pts);
+        const path = new Path2D();
+        pts.forEach(([x, y], i) => i ? path.lineTo(x, y) : path.moveTo(x, y));
+        path.closePath();
+        glowStroke(ctx, path, palColor(o.pal, k / (G - 1), 0.4 + 0.6 * Math.min(1, e * 1.4)), 1.5 * u, o.glow * (0.4 + e));
+        ctx.fillStyle = palColor(o.pal, k / (G - 1), 0.6 + 0.4 * e);
+        for (const [x, y] of pts) { ctx.beginPath(); ctx.arc(x, y, (1.6 + 2.5 * e) * u, 0, Math.PI * 2); ctx.fill(); }
+      }
+      // となりの多角形の頂点どうしを細い線でつなぐ
+      ctx.lineWidth = 0.8 * u;
+      for (let k = 0; k < G - 1; k++) {
+        ctx.strokeStyle = palColor(o.pal, k / (G - 1), 0.08 + 0.2 * groups[k]);
+        const a = verts[k], b = verts[k + 1];
+        ctx.beginPath();
+        for (let i = 0; i < a.length; i++) {
+          const j = Math.round(i / a.length * b.length) % b.length;
+          ctx.moveTo(a[i][0], a[i][1]); ctx.lineTo(b[j][0], b[j][1]);
+        }
+        ctx.stroke();
+      }
+      // 中心の十字
+      const ext = base + G * step * 1.2;
+      ctx.strokeStyle = "rgba(255,255,255,0.12)"; ctx.lineWidth = 1 * u;
+      ctx.beginPath();
+      ctx.moveTo(cx - ext, cy); ctx.lineTo(cx - base * 0.7, cy); ctx.moveTo(cx + base * 0.7, cy); ctx.lineTo(cx + ext, cy);
+      ctx.moveTo(cx, cy - ext); ctx.lineTo(cx, cy - base * 0.7); ctx.moveTo(cx, cy + base * 0.7); ctx.lineTo(cx, cy + ext);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(255,255,255,${0.5 + 0.5 * A.beat})`;
+      ctx.beginPath(); ctx.arc(cx, cy, (2.5 + 3 * A.beat) * u, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      drawCenterImage(ctx, o.img, cx, cy, base * 0.62);
+    },
+  },
+];
+  return { Analyzer, STYLES, PALETTES, palColor };
+})();
+// スロットごとに解析器・粒子などの状態・描画先を別々に持つ（同じ解析器を2回進めると動きが速くなるため）
+const stSlots = Array.from({ length: ST_SLOTS }, () => {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1920; canvas.height = 1080;
+  return { analyzer: null, state: {}, time: 0, canvas, ctx: canvas.getContext('2d') };
+});
+const stQuiet = { bands: new Float32Array(96), history: [], bass: 0, mid: 0, high: 0, level: 0, beat: 0, onset: false };
+
+// アクセント色から3色の配色を作る（色相を少しずらす）
+function accentPalette() {
+  const h = hexToHue(S.accent);
+  const toHex = (hh, sat, l) => {
+    const c = document.createElement('canvas').getContext('2d');
+    c.fillStyle = `hsl(${hh}, ${sat}%, ${l}%)`; return c.fillStyle;
+  };
+  return { name: 'Accent', c: [S.accent, toHex(h + 35, 90, 66), toHex(h - 35, 85, 72)] };
+}
+let accentPalCache = { key: '', pal: null };
+
+// その時刻の Studio の絵を、スロットのキャンバスに描く
+function renderStudio(dt, box, slot) {
+  const P = k => S[stKey(k, slot)], sl = stSlots[slot];
+  const style = Studio.STYLES.find(st => st.id === P('stStyle'));
+  if (!style) return false;
+  let A;
+  if (audioBuf) {
+    if (!sl.analyzer || sl.analyzer.src !== audioBuf) { sl.analyzer = new Studio.Analyzer(audioBuf); sl.analyzer.src = audioBuf; }
+    A = sl.analyzer.step(curTime(), playing ? dt : 0, { sens: P('stSens'), smooth: P('stSmooth') });
+  } else {
+    // 曲がない時も静かに動かしておく
+    for (let b = 0; b < 96; b++) stQuiet.bands[b] = 0.18 + 0.12 * Math.sin(b * 0.25 + sl.time * 1.5) * Math.cos(b * 0.07);
+    stQuiet.history = [stQuiet.bands];
+    A = stQuiet;
+  }
+  sl.time += dt * P('stSpeed') * (playing ? 1 : 0.25);
+  let pal;
+  if (P('stPal') === 'accent') {
+    if (accentPalCache.key !== S.accent) accentPalCache = { key: S.accent, pal: accentPalette() };
+    pal = accentPalCache.pal;
+  } else pal = Studio.PALETTES[+P('stPal')];
+  // 中央の画像に合わせる: 円の半径が画像と同じになるようサイズを逆算（PRISM は外側へ大きく広がるので位置だけ合わせる）
+  const u = Math.min(W, H) / 1000, base = { halo: 210, stardust: 150 }[style.id];
+  const fitPos = P('stFit') && (base || style.id === 'prism'), fitSize = P('stFit') && base;
+  const o = { sens: P('stSens'), amount: P('stAmount'), smooth: P('stSmooth'), glow: P('stGlow'), speed: P('stSpeed'),
+              density: P('stDensity'), size: fitSize ? box.r / (base * u) : P('stSize'), x: 0.5, y: fitPos ? box.cy / H : 0.5,
+              pal, img: null, dt: playing ? dt : 0, time: sl.time };
+  sl.ctx.clearRect(0, 0, W, H);
+  style.draw(sl.ctx, W, H, A, o, sl.state);
+  return true;
+}
+
+// ---------- 状態 ----------
+let img = null, bgBlur = null, bgDark = null, audioBuf = null, audioName = '';
+let actx = null, analyser = null, freq = null, wave = null, src = null, startAt = 0, playing = false;
+let recorder = null, recDest = null;
+let beatAnalyser = null, beatSpec = null, beatPrev = null;
+let bass = 0, pulse = 0, flash = 0, flux = 0, fluxAvg = 0, lastKick = -1, bandLevel = -100;
+const barsHalf = 90;
+const barVals = new Float32Array(barsHalf);
+let particles = [];
+
+// ---------- 入力 ----------
+function setStatus(s) { $('status').textContent = s; }
+
+function loadImage(file) {
+  const url = URL.createObjectURL(file);
+  const im = new Image();
+  im.onload = () => { img = im; buildBg(); $('imgDrop').classList.add('ok'); $('imgDrop').innerHTML = '🖼 ' + (file.name || '貼り付け画像') + '<br><small>差し替え可</small>'; refresh(); };
+  im.src = url;
+}
+
+// 書き出しファイルの大きさの目安（長い曲は注意を出す）
+function updateSizeNote() {
+  if (!audioBuf) { $('sizeNote').textContent = ''; return; }
+  const sec = audioBuf.duration, mb = (+$('quality').value + 320000) * sec / 8 / 1048576;
+  let t = `書き出しにかかる時間: 約${fmt(sec)}（曲と同じ長さ）・ファイルの大きさの目安: 約${Math.round(mb)} MB`;
+  if (sec > 600) t += '。10分を超える曲は、PCのメモリが少ないと途中で失敗することがあります（画質「標準」がおすすめ）';
+  $('sizeNote').textContent = t;
+}
+$('quality').onchange = updateSizeNote;
+
+$('termsLink').onclick = e => { e.preventDefault(); $('terms').showModal(); };
+
+// 動作環境のチェック（PC版 Chrome / Edge 向け）
+(function checkEnv() {
+  const msgs = [];
+  const mobile = matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 820;
+  if (mobile) msgs.push('スマホ・タブレットでは動作が重く、書き出しに失敗することがあります。PCでのご利用をおすすめします。');
+  if (!window.MediaRecorder || !window.AudioContext) msgs.push('このブラウザは動画の書き出しに対応していません。PC版の Chrome または Edge をお使いください。');
+  else if (!window.VideoEncoder) msgs.push('このブラウザでは簡易方式で書き出します。書き出し中はこのタブを表示したままにしてください。安定して書き出すには Chrome / Edge をおすすめします。');
+  if (msgs.length) { $('envBanner').innerHTML = msgs.join('<br>'); $('envBanner').hidden = false; }
+})();
+
+// テンプレートの読み込み・書き出し（配布・共有用の .json）
+$('exportTpl').onclick = () => {
+  const t = loadMyTemplates();
+  if (!Object.keys(t).length) { setStatus('書き出せる自分のテンプレートがありません（先に「保存」してください）'); return; }
+  const blob = new Blob([JSON.stringify({ app: 'CoverPulse', version: 1, templates: t }, null, 1)], { type: 'application/json' });
+  downloadBlob(blob, 'CoverPulse-templates.json');
+  setStatus(Object.keys(t).length + ' 件のテンプレートを書き出しました');
+};
+$('importTpl').onclick = () => $('tplFile').click();
+$('tplFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  try {
+    const data = JSON.parse(await f.text());
+    const incoming = data && data.templates;
+    if (!incoming || typeof incoming !== 'object') throw new Error('テンプレートが見つかりません');
+    const t = loadMyTemplates();
+    let n = 0;
+    for (const [name, v] of Object.entries(incoming)) {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
+      // 知らない項目は捨て、レイヤーは形を確かめてから受け取る
+      const clean = {};
+      for (const k of Object.keys(BASE)) if (k in v && k !== 'layers' && typeof v[k] === typeof BASE[k]) clean[k] = v[k];
+      if (Array.isArray(v.layers)) clean.layers = v.layers.filter(l => l && LAYER_NAMES[l.id]).map(l => ({
+        id: l.id, beat: !!l.beat, x: +l.x || 0, y: +l.y || 0, sc: +l.sc || 1, rot: +l.rot || 0 }));
+      t[String(name).slice(0, 40)] = clean; n++;
+    }
+    if (!n) throw new Error('読み込めるテンプレートがありませんでした');
+    if (!saveMyTemplates(t)) throw new Error('ブラウザの保存領域が使えません');
+    buildTemplateUI();
+    setStatus(n + ' 件のテンプレートを読み込みました。「自分のテンプレ」から選べます');
+  } catch (err) { setStatus('テンプレートを読み込めませんでした: ' + err.message); }
+};
+
+async function loadAudio(file) {
+  ensureCtx();
+  setStatus('曲を読み込み中…');
+  try {
+    audioBuf = await actx.decodeAudioData(await file.arrayBuffer());
+  } catch (e) { setStatus('曲を読み込めませんでした: ' + e.message); return; }
+  audioName = file.name.replace(/\.[^.]+$/, '');
+  if (!$('title').value) $('title').value = audioName;
+  $('audDrop').classList.add('ok');
+  $('audDrop').innerHTML = '🎵 ' + file.name + '<br><small>' + fmt(audioBuf.duration) + '</small>';
+  refresh();
+}
+
+let ovVideo = null;
+function loadVideo(file) {
+  if (ovVideo) { URL.revokeObjectURL(ovVideo.src); ovVideo.remove(); }
+  const v = document.createElement('video');
+  v.muted = true; v.playsInline = true; v.preload = 'auto';
+  v.onloadeddata = () => {
+    ovVideo = v;
+    $('vidDrop').classList.add('ok');
+    $('vidDrop').innerHTML = '🎞 ' + file.name + '<br><small>' + (isFinite(v.duration) ? fmt(v.duration) + '・' : '') + '差し替え可</small>';
+    $('vidSection').hidden = false;
+    selectLayer('video');
+    setStatus('重ねる動画を読み込みました。レイヤー欄の「重ねる動画」で重ね順を変えられます。');
+  };
+  v.onerror = () => setStatus('この動画は読み込めませんでした: ' + file.name);
+  v.src = URL.createObjectURL(file);
+}
+$('vidDrop').onclick = () => $('vidFile').click();
+$('vidFile').onchange = e => handleFiles(e.target.files);
+for (const el of document.querySelectorAll('[data-x]')) el.addEventListener('input', () => {
+  const L = layerById(selLayer); if (!L) return;
+  L[el.dataset.x] = +el.value; markTpl(null); updateXformUI();
+});
+for (const b of document.querySelectorAll('[data-rot]')) b.onclick = () => { const L = layerById(selLayer); if (L) { L.rot = +b.dataset.rot; markTpl(null); updateXformUI(); } };
+$('xfReset').onclick = () => { const L = layerById(selLayer); if (L) { Object.assign(L, { x: 0, y: 0, sc: 1, rot: 0 }); markTpl(null); updateXformUI(); } };
+
+// プレビュー画面のドラッグで、選択中のレイヤーを動かす
+let dragL = null;
+cv.addEventListener('pointerdown', e => {
+  const L = layerById(selLayer);
+  if (!L || L.id === 'flash') return;
+  dragL = { L, x: e.clientX, y: e.clientY, lx: L.x, ly: L.y };
+  cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener('pointermove', e => {
+  if (!dragL) return;
+  const k = W / cv.clientWidth;
+  dragL.L.x = Math.round(dragL.lx + (e.clientX - dragL.x) * k);
+  dragL.L.y = Math.round(dragL.ly + (e.clientY - dragL.y) * k);
+  updateXformUI();
+});
+const endDrag = () => { if (dragL) markTpl(null); dragL = null; };
+cv.addEventListener('pointerup', endDrag);
+cv.addEventListener('pointercancel', endDrag);
+
+$('vidRemove').onclick = () => {
+  if (!ovVideo) return;
+  URL.revokeObjectURL(ovVideo.src); ovVideo = null;
+  $('vidDrop').classList.remove('ok');
+  $('vidDrop').innerHTML = '🎞 重ねる動画（任意）<br><small>ビジュアライザー素材など（透明WebM / MP4）</small>';
+  $('vidSection').hidden = true;
+};
+
+function handleFiles(files) {
+  for (const f of files) {
+    if (f.type.startsWith('video/') || /\.(webm|mp4|mov|m4v)$/i.test(f.name)) loadVideo(f);
+    else if (f.type.startsWith('image/')) loadImage(f);
+    else if (f.type.startsWith('audio/') || /\.(wav|mp3|flac|ogg|m4a|aac)$/i.test(f.name)) loadAudio(f);
+  }
+}
+
+$('imgDrop').onclick = () => $('imgFile').click();
+$('audDrop').onclick = () => $('audFile').click();
+$('imgFile').onchange = e => handleFiles(e.target.files);
+$('audFile').onchange = e => handleFiles(e.target.files);
+let dragDepth = 0;
+const isFileDrag = e => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+addEventListener('dragenter', e => { if (!isFileDrag(e)) return; e.preventDefault(); dragDepth++; $('overlay').classList.add('on'); });
+addEventListener('dragleave', e => { if (!isFileDrag(e)) return; if (--dragDepth <= 0) { dragDepth = 0; $('overlay').classList.remove('on'); } });
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => { if (!isFileDrag(e)) return; e.preventDefault(); dragDepth = 0; $('overlay').classList.remove('on'); handleFiles(e.dataTransfer.files); });
+addEventListener('paste', e => {
+  for (const it of e.clipboardData.items) if (it.type.startsWith('image/')) loadImage(it.getAsFile());
+});
+
+function refresh() {
+  const ready = img && audioBuf;
+  $('st1').classList.toggle('done', !!img);
+  $('st2').classList.toggle('done', !!audioBuf);
+  $('st3').classList.toggle('done', !!ready);
+  $('st4').classList.toggle('done', !!lastExport);
+  updateSizeNote();
+  $('playBtn').disabled = !audioBuf || !!recorder;
+  $('exportBtn').disabled = !ready && !recorder;
+  if (!recorder) setStatus(ready ? '準備OK。プレビューで確認して、書き出してください。' : (img ? '曲を入れてください' : (audioBuf ? 'サムネ画像を入れてください' : '画像と曲をドロップ（画像は Ctrl+V で貼り付けも可）')));
+}
+
+// 背景用の加工済み画像は重いので一度だけ作っておく
+function buildBg() {
+  const make = filter => {
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const b = c.getContext('2d');
+    const s = Math.max(W / img.width, H / img.height) * 1.15;
+    b.filter = filter;
+    b.drawImage(img, CX - img.width * s / 2, CY - img.height * s / 2, img.width * s, img.height * s);
+    return c;
+  };
+  bgBlur = make('blur(28px) brightness(0.45) saturate(1.2)');
+  bgDark = make('brightness(0.3) saturate(0.9)');
+}
+
+// 質感用の素材
+const sprite = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d'), gr = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.4, 'rgba(255,255,255,0.5)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = gr; x.fillRect(0, 0, 64, 64); return c;
+})();
+const noisePatterns = Array.from({ length: 4 }, () => {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const x = c.getContext('2d'), d = x.createImageData(256, 256);
+  for (let i = 0; i < d.data.length; i += 4) { const v = Math.random() * 255; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255; }
+  x.putImageData(d, 0, 0); return g.createPattern(c, 'repeat');
+});
+const scanPattern = (() => {
+  const c = document.createElement('canvas'); c.width = 4; c.height = 4;
+  const x = c.getContext('2d'); x.fillStyle = 'rgba(0,0,0,0.55)'; x.fillRect(0, 0, 4, 2);
+  return g.createPattern(c, 'repeat');
+})();
+
+// ---------- 音声 ----------
+function ensureCtx() {
+  if (actx) return;
+  actx = new AudioContext();
+  analyser = actx.createAnalyser();
+  analyser.fftSize = 2048;
+  analyser.smoothingTimeConstant = 0.75;
+  freq = new Uint8Array(analyser.frequencyBinCount);
+  wave = new Uint8Array(analyser.fftSize);
+  analyser.connect(actx.destination);
+  // ビート検出専用（平滑化なし・dB値で取るので音圧が高くても頭打ちしない）
+  beatAnalyser = actx.createAnalyser();
+  beatAnalyser.fftSize = 2048;
+  beatAnalyser.smoothingTimeConstant = 0;
+  beatSpec = new Float32Array(beatAnalyser.frequencyBinCount);
+  beatPrev = new Float32Array(beatAnalyser.frequencyBinCount).fill(-100);
+}
+
+function startAudio(onEnd) {
+  stopAudio();
+  src = actx.createBufferSource();
+  src.buffer = audioBuf;
+  src.connect(analyser);
+  src.connect(beatAnalyser);
+  if (recDest) src.connect(recDest);
+  src.onended = () => { if (src && src._self === src) { playing = false; src = null; onEnd && onEnd(); } };
+  src._self = src;
+  startAt = actx.currentTime + 0.05;
+  src.start(startAt);
+  playing = true;
+}
+
+function stopAudio() {
+  if (src) { src._self = null; try { src.stop(); } catch {} src.disconnect(); src = null; }
+  playing = false;
+}
+
+$('playBtn').onclick = async () => {
+  await actx.resume();
+  if (playing) { stopAudio(); $('playBtn').textContent = '▶ プレビュー'; }
+  else { startAudio(() => $('playBtn').textContent = '▶ プレビュー'); $('playBtn').textContent = '■ 停止'; }
+};
+
+// ---------- 書き出し ----------
+function pickMime() {
+  const list = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a', 'video/mp4',
+                'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+  return list.find(m => MediaRecorder.isTypeSupported(m)) || '';
+}
+
+// ---------- MP4 の組み直し ----------
+// MediaRecorder の MP4 は細切れ形式（断片化MP4）で全体の長さが入っておらず、
+// Windows のプレーヤー等では長さが壊れて表示されシークできない。
+// 映像・音声データはそのまま使い、普通のMP4の目次(moov)を作り直す。
+function readBoxes(dv, start, end) {
+  const out = [];
+  let p = start;
+  while (p + 8 <= end) {
+    let size = dv.getUint32(p), hdr = 8;
+    const type = String.fromCharCode(dv.getUint8(p + 4), dv.getUint8(p + 5), dv.getUint8(p + 6), dv.getUint8(p + 7));
+    if (size === 1) { size = Number(dv.getBigUint64(p + 8)); hdr = 16; }
+    else if (size === 0) size = end - p;
+    if (size < hdr || p + size > end) break; // 末尾が途切れていたらそこまで
+    out.push({ type, start: p, end: p + size, body: p + hdr });
+    p += size;
+  }
+  return out;
+}
+
+// MP4 を書くための小道具
+const MP4 = (() => {
+  const enc = new TextEncoder();
+  const cat = parts => { const len = parts.reduce((s, x) => s + x.length, 0), o = new Uint8Array(len); let p = 0; for (const x of parts) { o.set(x, p); p += x.length; } return o; };
+  const u16 = n => new Uint8Array([(n >> 8) & 255, n & 255]);
+  const u32 = ns => { if (!Array.isArray(ns)) ns = [ns]; const o = new Uint8Array(ns.length * 4), d = new DataView(o.buffer); ns.forEach((n, i) => d.setUint32(i * 4, n >>> 0)); return o; };
+  const u64 = n => { const o = new Uint8Array(8); new DataView(o.buffer).setBigUint64(0, BigInt(n)); return o; };
+  const box = (type, ...parts) => { const body = cat(parts); return cat([u32(body.length + 8), enc.encode(type), body]); };
+  const fullbox = (type, ver, flags, ...parts) => box(type, u32(((ver << 24) | flags) >>> 0), ...parts);
+  const rle = vals => { const e = []; for (const v of vals) { const l = e[e.length - 1]; if (l && l[1] === v) l[0]++; else e.push([1, v]); } return e; };
+  return { enc, cat, u16, u32, u64, box, fullbox, rle };
+})();
+
+// 断片化MP4（MediaRecorder の出力）を読んで、トラックごとのサンプル一覧にする
+function parseFragmentedMp4(buf) {
+  const dv = new DataView(buf), u8 = new Uint8Array(buf);
+  const kids = (b, type) => readBoxes(dv, b.body, b.end).filter(x => x.type === type);
+  const kid = (b, type) => kids(b, type)[0];
+  const top = readBoxes(dv, 0, buf.byteLength);
+  const moov = top.find(b => b.type === 'moov');
+  if (!moov || !top.some(b => b.type === 'moof')) return null; // 断片化していない
+
+  const tracks = new Map();
+  for (const trak of kids(moov, 'trak')) {
+    const tkhd = kid(trak, 'tkhd'), mdia = kid(trak, 'mdia'), mdhd = kid(mdia, 'mdhd'), minf = kid(mdia, 'minf');
+    const hdlr = kid(mdia, 'hdlr'), stsd = kid(kid(minf, 'stbl'), 'stsd');
+    const sound = String.fromCharCode(...u8.subarray(hdlr.body + 8, hdlr.body + 12)) === 'soun';
+    tracks.set(dv.getUint32(tkhd.body + (dv.getUint8(tkhd.body) ? 20 : 12)), {
+      kind: sound ? 'soun' : 'vide', ts: dv.getUint32(mdhd.body + (dv.getUint8(mdhd.body) ? 20 : 12)),
+      width: dv.getUint32(tkhd.end - 8) >>> 16, height: dv.getUint32(tkhd.end - 4) >>> 16,
+      stsd: u8.slice(stsd.start, stsd.end), def: { dur: 0, size: 0, flags: 0 }, samples: [], chunks: [], acc: 0,
+    });
+  }
+  const mvex = kid(moov, 'mvex');
+  if (mvex) for (const trex of kids(mvex, 'trex')) {
+    const t = tracks.get(dv.getUint32(trex.body + 4));
+    if (t) t.def = { dur: dv.getUint32(trex.body + 12), size: dv.getUint32(trex.body + 16), flags: dv.getUint32(trex.body + 20) };
+  }
+
+  for (const moof of top.filter(b => b.type === 'moof')) {
+    for (const traf of kids(moof, 'traf')) {
+      const tfhd = kid(traf, 'tfhd');
+      const tf = dv.getUint32(tfhd.body) & 0xffffff, t = tracks.get(dv.getUint32(tfhd.body + 4));
+      if (!t) continue;
+      let p = tfhd.body + 8, base = moof.start;
+      let dDur = t.def.dur, dSize = t.def.size, dFlags = t.def.flags;
+      if (tf & 0x1) { base = Number(dv.getBigUint64(p)); p += 8; }
+      if (tf & 0x2) p += 4;
+      if (tf & 0x8) { dDur = dv.getUint32(p); p += 4; }
+      if (tf & 0x10) { dSize = dv.getUint32(p); p += 4; }
+      if (tf & 0x20) { dFlags = dv.getUint32(p); p += 4; }
+      let next = base;
+      for (const trun of kids(traf, 'trun')) {
+        const vf = dv.getUint32(trun.body), ver = vf >>> 24, fl = vf & 0xffffff, n = dv.getUint32(trun.body + 4);
+        let q = trun.body + 8, off = next, firstFlags = null;
+        if (fl & 0x1) { off = base + dv.getInt32(q); q += 4; }
+        if (fl & 0x4) { firstFlags = dv.getUint32(q); q += 4; }
+        let total = 0;
+        const list = [];
+        for (let i = 0; i < n; i++) {
+          const dur = fl & 0x100 ? dv.getUint32((q += 4) - 4) : dDur;
+          const size = fl & 0x200 ? dv.getUint32((q += 4) - 4) : dSize;
+          const sf = fl & 0x400 ? dv.getUint32((q += 4) - 4) : (i === 0 && firstFlags !== null ? firstFlags : dFlags);
+          const cto = fl & 0x800 ? (ver ? dv.getInt32((q += 4) - 4) : dv.getUint32((q += 4) - 4)) : 0;
+          if (off + total + size > buf.byteLength) break; // 途切れたサンプルは捨てる
+          list.push({ dur, size, cto, sync: t.kind === 'soun' || !(sf & 0x10000) });
+          total += size;
+        }
+        if (!list.length) continue;
+        t.chunks.push({ n: list.length, start: t.acc / t.ts, parts: [u8.subarray(off, off + total)], len: total });
+        for (const x of list) t.acc += x.dur || 0;
+        t.samples.push(...list);
+        next = off + total;
+      }
+    }
+  }
+  return [...tracks.values()].filter(t => t.samples.length);
+}
+
+// 普通の形式の MP4 を組み立てる（目次 moov を先頭、データは時刻順に並べる）
+// tracks: { kind: 'vide'|'soun', ts, width, height, stsd(箱ごと), samples[{size,dur,cto,sync}], chunks[{n,start,parts,len,sdi?}] }
+function writeMp4(tracks) {
+  const { enc, cat, u32, u64, box, fullbox, rle } = MP4;
+  tracks.forEach((t, i) => t.id = i + 1);
+  const order = tracks.flatMap(t => t.chunks).sort((a, b) => a.start - b.start);
+  let pos = 0;
+  for (const c of order) { c.pos = pos; pos += c.len; }
+  const mdatLen = pos, big = mdatLen + 16 > 0xffffffff;
+  const movieTS = 1000, matrix = u32([0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000]);
+
+  const build = mdatStart => {
+    let movieDur = 0;
+    const traks = tracks.map(t => {
+      const vide = t.kind === 'vide';
+      const durs = t.samples.map(s => s.dur);
+      for (let i = 0; i < durs.length; i++) if (!durs[i]) durs[i] = durs[i - 1] || 1; // 長さ0のサンプル対策
+      const mediaDur = durs.reduce((a, b) => a + b, 0);
+      const tDur = Math.round(mediaDur * movieTS / t.ts);
+      movieDur = Math.max(movieDur, tDur);
+      const stts = rle(durs);
+      const ctts = t.samples.some(s => s.cto) ? rle(t.samples.map(s => s.cto)) : null;
+      const stsc = [];
+      t.chunks.forEach((c, i) => {
+        const l = stsc[stsc.length - 1], sdi = c.sdi || 1;
+        if (!l || l[1] !== c.n || l[2] !== sdi) stsc.push([i + 1, c.n, sdi]);
+      });
+      const syncs = t.samples.every(s => s.sync) ? null : t.samples.map((s, i) => s.sync ? i + 1 : 0).filter(Boolean);
+      const stbl = box('stbl', t.stsd,
+        fullbox('stts', 0, 0, u32([stts.length, ...stts.flat()])),
+        ...(ctts ? [fullbox('ctts', 1, 0, u32([ctts.length, ...ctts.flat()]))] : []),
+        fullbox('stsc', 0, 0, u32([stsc.length, ...stsc.flat()])),
+        fullbox('stsz', 0, 0, u32([0, t.samples.length, ...t.samples.map(s => s.size)])),
+        big ? fullbox('co64', 0, 0, u32(t.chunks.length), ...t.chunks.map(c => u64(mdatStart + c.pos)))
+            : fullbox('stco', 0, 0, u32([t.chunks.length, ...t.chunks.map(c => mdatStart + c.pos)])),
+        ...(syncs ? [fullbox('stss', 0, 0, u32([syncs.length, ...syncs]))] : []));
+      return box('trak',
+        fullbox('tkhd', 0, 3, u32([0, 0, t.id, 0, tDur, 0, 0, 0, vide ? 0 : 0x01000000]), matrix,
+                u32([(t.width || 0) * 65536, (t.height || 0) * 65536])),
+        box('mdia',
+          fullbox('mdhd', 0, 0, u32([0, 0, t.ts, mediaDur, 0x55c40000])), // 言語 'und'
+          fullbox('hdlr', 0, 0, u32([0]), enc.encode(vide ? 'vide' : 'soun'), u32([0, 0, 0]), enc.encode((vide ? 'VideoHandler' : 'SoundHandler') + '\0')),
+          box('minf',
+            vide ? fullbox('vmhd', 0, 1, u32([0, 0])) : fullbox('smhd', 0, 0, u32([0])),
+            box('dinf', fullbox('dref', 0, 0, u32([1]), fullbox('url ', 0, 1))),
+            stbl)));
+    });
+    return box('moov', fullbox('mvhd', 0, 0, u32([0, 0, movieTS, movieDur, 0x10000, 0x01000000, 0, 0]), matrix,
+                               u32([0, 0, 0, 0, 0, 0, tracks.length + 1])), ...traks);
+  };
+  const ftyp = box('ftyp', enc.encode('isom'), u32(512), enc.encode('isomiso2avc1mp41'));
+  const mdatHdr = big ? cat([u32(1), enc.encode('mdat'), u64(mdatLen + 16)]) : cat([u32(mdatLen + 8), enc.encode('mdat')]);
+  const sizeProbe = build(0).length; // 目次の大きさを先に測ってからデータ位置を確定させる
+  const moovOut = build(ftyp.length + sizeProbe + mdatHdr.length);
+  return new Blob([ftyp, moovOut, mdatHdr, ...order.flatMap(c => c.parts)], { type: 'video/mp4' });
+}
+
+function remuxFragmentedMp4(buf) {
+  const tracks = parseFragmentedMp4(buf);
+  return tracks ? writeMp4(tracks) : null;
+}
+
+async function fixMp4(blob) {
+  try { return remuxFragmentedMp4(await blob.arrayBuffer()) || blob; }
+  catch (e) { console.warn('MP4の組み直しに失敗。元のファイルを保存します', e); return blob; }
+}
+
+// H.264 の映像トラック（WebCodecs の出力から作る）
+function avc1Entry(w, h, avcC) {
+  const { u16, u32, box } = MP4;
+  return box('avc1', new Uint8Array(6), u16(1), new Uint8Array(16), u16(w), u16(h),
+             u32([0x480000, 0x480000, 0]), u16(1), new Uint8Array(32), u16(0x18), u16(0xffff), box('avcC', avcC));
+}
+function videoTrackFromSegments(segs, fps) {
+  const ts = 90000, used = segs.filter(s => s.avcC && s.chunks.length);
+  const samples = [], chunks = [], dtsAll = [];
+  used.forEach((seg, si) => {
+    const pts = seg.chunks.map(c => Math.round(c.pts * 0.09));
+    const dts = [...pts].sort((a, b) => a - b); // 表示順に並べ替えた時刻を、デコードの時刻として使う
+    const startIdx = samples.length;
+    seg.chunks.forEach((c, i) => {
+      let d = dts[i];
+      if (dtsAll.length && d <= dtsAll[dtsAll.length - 1]) d = dtsAll[dtsAll.length - 1] + 1;
+      dtsAll.push(d);
+      samples.push({ size: c.data.length, dur: 0, cto: pts[i] - d, sync: c.key });
+    });
+    for (let i = 0; i < seg.chunks.length; i += 30) {
+      const part = seg.chunks.slice(i, i + 30);
+      chunks.push({ n: part.length, start: dtsAll[startIdx + i] / ts, parts: part.map(c => c.data),
+                    len: part.reduce((s, c) => s + c.data.length, 0), sdi: si + 1 });
+    }
+  });
+  for (let i = 0; i < samples.length; i++)
+    samples[i].dur = i + 1 < samples.length ? dtsAll[i + 1] - dtsAll[i] : (samples[i - 1] ? samples[i - 1].dur : Math.round(ts / fps));
+  const { u32, fullbox } = MP4;
+  return { kind: 'vide', ts, width: W, height: H, samples, chunks,
+           stsd: fullbox('stsd', 0, 0, u32([used.length]), ...used.map(s => avc1Entry(W, H, s.avcC))) };
+}
+
+let lastExport = null, watchdog = 0;
+
+function downloadBlob(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+async function saveExport() {
+  const { blob, name, handle } = lastExport;
+  if (handle) {
+    try {
+      const w = await handle.createWritable(); await w.write(blob); await w.close();
+      return '保存しました: ' + handle.name;
+    } catch (e) { /* 書き込めなければ通常のダウンロードに切り替える */ }
+  }
+  downloadBlob(blob, name);
+  return 'ダウンロードフォルダに保存しました: ' + name;
+}
+
+// 書き出し中の描画は専用タイマーで回す。
+// requestAnimationFrame はウィンドウが隠れると止まり、映像だけ止まった動画になるため。
+// （Worker のタイマーは画面が隠れても間引かれにくい）
+let exportTrack = null, exp = null;
+function exportTick() {
+  if (exp) { encodeFrame(); return; }
+  if (!exportTrack) return;
+  render(performance.now());
+  exportTrack.requestFrame(); // 描いたコマを1枚ずつ録画へ渡す
+}
+let ticker;
+try {
+  ticker = new Worker(URL.createObjectURL(new Blob([
+    'let id = 0; onmessage = e => { clearInterval(id); if (e.data) id = setInterval(() => postMessage(0), 1000 / e.data); };'
+  ], { type: 'text/javascript' })));
+  ticker.onmessage = exportTick;
+} catch (e) {
+  // Worker が使えない環境ではページ内のタイマーで代用する
+  let id = 0;
+  ticker = { postMessage: fps => { clearInterval(id); if (fps) id = setInterval(exportTick, 1000 / fps); } };
+}
+
+// 録画を止める（再生終了・見張りタイマー・手動停止のどれから呼ばれても1回だけ効く）
+function finishExport() {
+  clearInterval(watchdog);
+  ticker.postMessage(0);
+  if (recorder && recorder.state !== 'inactive') recorder.stop();
+  stopAudio();
+}
+
+// ---- 書き出し（新方式）: 映像は WebCodecs で1コマずつ変換、音声は MediaRecorder で AAC 録音 ----
+// 映像の変換が途中で止まっても気づけて、ソフトウェア変換に切り替えて続けられる。
+function makeVideoEncoder(hw) {
+  const seg = { avcC: null, chunks: [] };
+  exp.segs.push(seg);
+  const enc = new VideoEncoder({
+    output: (chunk, meta) => {
+      const d = meta && meta.decoderConfig && meta.decoderConfig.description;
+      if (d && !seg.avcC) seg.avcC = ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength).slice() : new Uint8Array(d).slice();
+      const data = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(data);
+      seg.chunks.push({ data, pts: chunk.timestamp, key: chunk.type === 'key' });
+    },
+    error: e => {
+      exp.errors.push(e.message);
+      if (hw !== 'prefer-software' && !exp.done) { exp.enc = makeVideoEncoder('prefer-software'); exp.needKey = true; }
+      else exp.failed = true;
+    },
+  });
+  enc.configure({ codec: exp.codec, width: W, height: H, bitrate: +$('quality').value, framerate: exp.fps,
+                  hardwareAcceleration: hw, avc: { format: 'avc' } });
+  return enc;
+}
+
+function encodeFrame() {
+  if (exp.failed || exp.done) return;
+  render(performance.now());
+  const enc = exp.enc;
+  if (enc.state !== 'configured') return;
+  if (enc.encodeQueueSize > 6) { exp.dropped++; return; } // 変換が追いつかない時はそのコマを飛ばす
+  // 時刻は音声と同じ時計（AudioContext）で測る → 音ズレしない
+  const us = Math.max(Math.round((actx.currentTime - exp.t0) * 1e6), exp.lastUs + 1000);
+  exp.lastUs = us;
+  const f = new VideoFrame(cv, { timestamp: us });
+  enc.encode(f, { keyFrame: exp.needKey || exp.n % (exp.fps * 2) === 0 });
+  f.close();
+  exp.needKey = false;
+  exp.n++;
+}
+
+async function pickAvcCodec(fps) {
+  const lv = fps > 30 ? '2A' : '28';
+  for (const codec of ['avc1.6400' + lv, 'avc1.4D00' + lv, 'avc1.4200' + lv]) {
+    try {
+      const r = await VideoEncoder.isConfigSupported({ codec, width: W, height: H, bitrate: 12_000_000, framerate: fps });
+      if (r.supported) return codec;
+    } catch (e) {}
+  }
+  return null;
+}
+const pickAudioMime = () => ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4'].find(m => MediaRecorder.isTypeSupported(m)) || '';
+
+async function exportWebCodecs(handle, name, codec, aMime) {
+  const fps = +$('fps').value;
+  exp = { fps, codec, segs: [], errors: [], dropped: 0, n: 0, lastUs: -1000, needKey: true, failed: false, done: false };
+  exp.enc = makeVideoEncoder('no-preference');
+  recDest = actx.createMediaStreamDestination();
+  recorder = new MediaRecorder(recDest.stream, { mimeType: aMime, audioBitsPerSecond: 320_000 });
+  const aChunks = [];
+  recorder.ondataavailable = e => e.data.size && aChunks.push(e.data);
+  recorder.onstop = async () => {
+    exp.done = true;
+    setStatus('仕上げ中（映像の変換を待っています）…');
+    try { await exp.enc.flush(); } catch (e) {}
+    try { exp.enc.close(); } catch (e) {}
+    let blob = null, problem = '';
+    try {
+      const audio = (parseFragmentedMp4(await new Blob(aChunks).arrayBuffer()) || []).find(t => t.kind === 'soun');
+      const video = videoTrackFromSegments(exp.segs, fps);
+      if (!video.samples.length) throw new Error('映像のコマが1つもありません');
+      if (!audio) problem = '（音声を取り出せませんでした）';
+      blob = writeMp4([video, audio].filter(Boolean));
+      const dur = audioBuf.duration, got = video.samples.length / fps;
+      if (exp.dropped > fps * 2) problem += `（変換が追いつかず ${exp.dropped} コマ飛ばしました。フレームレートを30fpsにすると改善します）`;
+      if (exp.failed) problem += '（映像の変換が途中で失敗しました: ' + exp.errors.join(' / ') + '）';
+      else if (exp.errors.length) problem += '（途中でソフトウェア変換に切り替えました）';
+      console.log('export', { frames: video.samples.length, expected: Math.round(dur * fps), dropped: exp.dropped, errors: exp.errors, got });
+    } catch (e) { problem = '書き出しに失敗しました: ' + e.message; }
+    exp = null;
+    recorder = null; recDest = null;
+    $('exportBtn').textContent = '⏺ 動画を書き出す';
+    refresh();
+    if (!blob) { setStatus(problem); return; }
+    lastExport = { blob, name, handle };
+    const msg = await saveExport();
+    setStatus('書き出し完了（' + (blob.size / 1048576).toFixed(1) + ' MB）。' + msg + problem);
+    $('resaveBtn').hidden = false; $('st4').classList.add('done');
+  };
+  $('playBtn').textContent = '▶ プレビュー';
+  $('resaveBtn').hidden = true;
+  refresh();
+  $('exportBtn').textContent = '■ 止めて保存';
+  setStatus('書き出し中…（別のウィンドウに切り替えても止まりません）');
+  recorder.start(1000);
+  exp.t0 = actx.currentTime;
+  ticker.postMessage(fps);
+  startAudio(() => setTimeout(finishExport, 300));
+  const end = startAt + audioBuf.duration + 0.5; // 再生終了の通知が来ない環境向けの保険
+  watchdog = setInterval(() => { if (actx.currentTime >= end) finishExport(); }, 250);
+}
+
+// ---- 書き出し（旧方式）: 画面を MediaRecorder でまるごと録画。新方式が使えないブラウザ用 ----
+function exportLegacy(handle, name, mime) {
+  const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+  const fps = +$('fps').value;
+  recDest = actx.createMediaStreamDestination();
+  const vTrack = cv.captureStream(0).getVideoTracks()[0]; // 0 = 自動では取り込まず requestFrame() の時だけ
+  const stream = new MediaStream([vTrack, ...recDest.stream.getAudioTracks()]);
+  recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: +$('quality').value, audioBitsPerSecond: 320_000 });
+  const chunks = [];
+  recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
+  recorder.onstop = async () => {
+    exportTrack = null;
+    vTrack.stop();
+    let blob = new Blob(chunks, { type: mime || 'video/webm' });
+    if (ext === 'mp4') { setStatus('仕上げ中（シークできるようMP4を整えています）…'); blob = await fixMp4(blob); }
+    lastExport = { blob, name, handle };
+    recorder = null; recDest = null;
+    $('exportBtn').textContent = '⏺ 動画を書き出す';
+    refresh();
+    const msg = await saveExport();
+    setStatus('書き出し完了（' + (blob.size / 1048576).toFixed(1) + ' MB）。' + msg);
+    $('resaveBtn').hidden = false; $('st4').classList.add('done');
+  };
+  $('playBtn').textContent = '▶ プレビュー';
+  $('resaveBtn').hidden = true;
+  refresh();
+  $('exportBtn').textContent = '■ 止めて保存';
+  setStatus('書き出し中… このタブを表示したままにしてください (' + (mime || 'default') + ')');
+  recorder.start(1000);
+  exportTrack = vTrack;
+  ticker.postMessage(fps);
+  startAudio(() => setTimeout(finishExport, 300));
+  const end = startAt + audioBuf.duration + 0.5;
+  watchdog = setInterval(() => { if (actx.currentTime >= end) finishExport(); }, 250);
+}
+
+$('exportBtn').onclick = async () => {
+  if (recorder) { setStatus('止めています…'); finishExport(); return; }
+  const fps = +$('fps').value;
+  const codec = window.VideoEncoder && window.VideoFrame ? await pickAvcCodec(fps) : null;
+  const aMime = pickAudioMime();
+  const modern = !!(codec && aMime);
+  const mime = modern ? 'video/mp4' : pickMime();
+  const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+  const name = (($('title').value || audioName || 'mv').replace(/[\\/:*?"<>|]/g, '_')) + '.' + ext;
+
+  // 保存先を先に選んでもらう（対応ブラウザのみ。非対応ならダウンロードフォルダへ）
+  let handle = null;
+  if (window.showSaveFilePicker) {
+    try {
+      handle = await showSaveFilePicker({ suggestedName: name,
+        types: [{ description: '動画', accept: { [ext === 'mp4' ? 'video/mp4' : 'video/webm']: ['.' + ext] } }] });
+    } catch (e) {
+      if (e.name === 'AbortError') { setStatus('書き出しをキャンセルしました'); return; }
+    }
+  }
+  await actx.resume();
+  if (modern) exportWebCodecs(handle, name, codec, aMime);
+  else exportLegacy(handle, name, mime);
+};
+
+$('resaveBtn').onclick = async () => { if (lastExport) setStatus(await saveExport()); };
+
+// ---------- 解析 ----------
+function curTime() { return playing ? Math.max(0, actx.currentTime - startAt) : 0; }
+function fmt(s) { s = Math.floor(s); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+
+function analyse(dt) {
+  if (!freq) return;
+  if (playing) { analyser.getByteFrequencyData(freq); analyser.getByteTimeDomainData(wave); }
+  else { freq.fill(0); wave.fill(128); }
+  let b = 0;
+  for (let i = 1; i <= 6; i++) b += freq[i];
+  bass = b / 6 / 255;
+
+  // ビート検出: 低域の各周波数で「前のコマより増えた分」だけを合計する（スペクトルフラックス）。
+  // 鳴りっぱなしのベースは増えないので無視され、キックの立ち上がりだけが残る。
+  // 判定は直近の平均との比なので、曲の音量・音圧に関係なく同じように反応する。
+  let kick = 0;
+  if (playing) {
+    beatAnalyser.getFloatFrequencyData(beatSpec);
+    const hz = actx.sampleRate / beatAnalyser.fftSize;
+    const [lo, hi] = S.beatBand === 'kick' ? [40, 130] : [20, 250];
+    // 曲の低域レベルより24dB以上小さい成分（キック間のノイズなど）は判定に使わない
+    const i0 = Math.max(1, Math.round(lo / hz)), i1 = Math.round(hi / hz);
+    let bandMax = -100;
+    for (let i = i0; i <= i1; i++) bandMax = Math.max(bandMax, beatSpec[i]);
+    bandLevel += (bandMax - bandLevel) * (1 - Math.exp(-dt / 1.0));
+    const gate = Math.max(-70, bandLevel - 24);
+    let f = 0;
+    for (let i = i0; i <= i1; i++) {
+      const v = Math.max(beatSpec[i], -100);
+      if (v > gate) f += Math.max(0, v - Math.max(beatPrev[i], gate));
+      beatPrev[i] = v;
+    }
+    flux = f;
+    fluxAvg += (f - fluxAvg) * (1 - Math.exp(-dt / 0.6));
+    const ratio = 1.4 + 2.2 * Math.pow(0.5, S.beatSens * 1.6); // 感度0: 3.6倍 / 1: 2.1倍 / 2: 1.6倍
+    const thr = fluxAvg * ratio + 3;
+    kick = Math.min(1, Math.max(0, (f - thr) / (thr * 0.8)));
+    // 1つのキックで二重に反応しないよう、反応後50〜150msは無視する（直後50msはピークを拾うため許可）
+    const now = actx.currentTime, since = now - lastKick;
+    if (since > 0.05 && since < 0.15) kick = 0;
+    else if (kick > 0.15 && since >= 0.15) lastKick = now;
+  } else { beatPrev && beatPrev.fill(-100); fluxAvg = 0; lastKick = -1; bandLevel = -100; }
+  const decay = Math.pow(0.86, dt * 60);
+  pulse = Math.max(pulse * decay, kick);
+  flash = Math.max(flash * decay, kick);
+
+  // 低音→高音を対数的に割り当てる
+  const minBin = 2, maxBin = 420;
+  for (let i = 0; i < barsHalf; i++) {
+    const a = Math.floor(minBin * Math.pow(maxBin / minBin, i / barsHalf));
+    const z = Math.max(a + 1, Math.floor(minBin * Math.pow(maxBin / minBin, (i + 1) / barsHalf)));
+    let v = 0;
+    for (let k = a; k < z; k++) v = Math.max(v, freq[k]);
+    v = Math.pow(v / 255, 1.6) * S.sens * (1 + i / barsHalf * 0.8); // 高域は控えめに出るので少し持ち上げる
+    barVals[i] = v > barVals[i] ? v : barVals[i] * 0.88 + v * 0.12;
+  }
+}
+
+// ---------- 各ブロックの描画 ----------
+function hexToHue(hex) {
+  const r = parseInt(hex.slice(1, 3), 16) / 255, gg = parseInt(hex.slice(3, 5), 16) / 255, b = parseInt(hex.slice(5, 7), 16) / 255;
+  const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b), d = mx - mn;
+  if (!d) return 0;
+  let h = mx === r ? ((gg - b) / d) % 6 : mx === gg ? (b - r) / d + 2 : (r - gg) / d + 4;
+  return (h * 60 + 360) % 360;
+}
+
+function drawBackground(t) {
+  const s = (S.bg === 'blurZoom' ? 1.04 + 0.03 * Math.sin(t * 0.08) : 1.02) + (S.bgPulse ? pulse * 0.025 : 0);
+  if ((S.bg === 'blurZoom' || S.bg === 'blurStatic' || S.bg === 'darkImage') && bgBlur) {
+    g.save(); g.translate(CX, CY); g.scale(s, s);
+    g.drawImage(S.bg === 'darkImage' ? bgDark : bgBlur, -CX, -CY);
+    g.restore();
+  } else if (S.bg === 'gradient') {
+    const h = hexToHue(S.accent), L = 14 + (S.bgPulse ? pulse * 8 : 0);
+    g.fillStyle = `hsl(${h + 200}, 50%, 6%)`; g.fillRect(-50, -50, W + 100, H + 100);
+    const blobs = [[0.3, 0.35, h, 0.11], [0.72, 0.6, h + 50, 0.07], [0.5, 0.85, h - 40, 0.09]];
+    for (const [bx, by, hue, sp] of blobs) {
+      const x = W * (bx + 0.12 * Math.sin(t * sp * 2)), y = H * (by + 0.12 * Math.cos(t * sp * 1.6));
+      const gr = g.createRadialGradient(x, y, 0, x, y, 800 * s);
+      gr.addColorStop(0, `hsla(${hue}, 80%, ${L + 22}%, 0.55)`); gr.addColorStop(1, `hsla(${hue}, 80%, ${L}%, 0)`);
+      g.fillStyle = gr; g.fillRect(-50, -50, W + 100, H + 100);
+    }
+  } else {
+    g.fillStyle = '#060608'; g.fillRect(-50, -50, W + 100, H + 100);
+  }
+  const vg = g.createRadialGradient(CX, CY, 200, CX, CY, W * 0.7);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.6)');
+  g.fillStyle = vg; g.fillRect(-50, -50, W + 100, H + 100);
+}
+
+function newParticle(type, anywhere) {
+  const r = Math.random;
+  if (type === 'outward') return { a: r() * Math.PI * 2, d: anywhere ? r() * 1000 : 250 + r() * 80, v: 0.4 + r() * 1.6, r: 1 + r() * 2.5, o: 0.3 + r() * 0.6 };
+  if (type === 'snow') return { x: r() * W, y: anywhere ? r() * H : -10, vx: (r() - 0.5) * 0.5, v: 0.5 + r() * 1.5, r: 1 + r() * 3, o: 0.2 + r() * 0.6, p: r() * 6 };
+  return { x: r() * W, y: anywhere ? r() * H : H + 80, v: 0.15 + r() * 0.5, r: 15 + r() * 55, o: 0.05 + r() * 0.18, p: r() * 6 };
+}
+
+function drawParticles(t, dt) {
+  const type = S.particles;
+  if (type === 'none') { particles = []; return; }
+  const n = type === 'bokeh' ? Math.round(S.partAmount / 3) : S.partAmount;
+  while (particles.length < n) particles.push(newParticle(type, true));
+  if (particles.length > n) particles.length = n;
+  const k = dt * 60, maxD = Math.hypot(CX, CY);
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  for (const p of particles) {
+    let x, y, size, a;
+    if (type === 'outward') {
+      p.d += p.v * (1 + bass * 7) * k;
+      if (p.d > maxD) Object.assign(p, newParticle(type, false));
+      x = CX + Math.cos(p.a) * p.d; y = CY + Math.sin(p.a) * p.d;
+      size = p.r * (1 + pulse) * 3; a = p.o * Math.min(1, (p.d - 240) / 200);
+    } else if (type === 'snow') {
+      p.y += p.v * (1 + bass * 2) * k; p.x += (p.vx + Math.sin(t + p.p) * 0.3) * k;
+      if (p.y > H + 10) Object.assign(p, newParticle(type, false));
+      x = p.x; y = p.y; size = p.r * 3; a = p.o;
+    } else {
+      p.y -= p.v * k; p.x += Math.sin(t * 0.3 + p.p) * 0.2 * k;
+      if (p.y < -80) Object.assign(p, newParticle(type, false));
+      x = p.x; y = p.y; size = p.r * 2 * (1 + pulse * 0.3); a = p.o * (0.6 + pulse * 0.8);
+    }
+    if (a <= 0) continue;
+    g.globalAlpha = Math.min(1, a);
+    g.drawImage(sprite, x - size / 2, y - size / 2, size, size);
+  }
+  g.restore();
+}
+
+// 中央画像の大きさと位置（ビジュアライザーの配置にも使う）
+function imageBox(t) {
+  let w = S.imgSize, h = S.imgSize;
+  if (S.imgShape === 'original' && img) {
+    const ar = img.width / img.height;
+    w = h * ar;
+    if (w > W * 0.8) { w = W * 0.8; h = w / ar; }
+  }
+  let scale = 1, dy = 0, rot = 0;
+  if (S.imgMotion === 'pulse') scale = 1 + pulse * 0.07;
+  else if (S.imgMotion === 'float') dy = Math.sin(t * 0.7) * 10;
+  else if (S.imgMotion === 'rotate') rot = t * 0.15;
+  return { w: w * scale, h: h * scale, cy: CY + dy, rot, r: Math.max(w, h) * scale / 2 };
+}
+
+function shapePath(w, h) {
+  g.beginPath();
+  if (S.imgShape === 'circle') g.arc(0, 0, w / 2, 0, Math.PI * 2);
+  else if (S.imgShape === 'rounded') g.roundRect(-w / 2, -h / 2, w, h, Math.min(w, h) * 0.08);
+  else g.rect(-w / 2, -h / 2, w, h);
+}
+
+function drawImage(box) {
+  g.save();
+  g.translate(CX, box.cy); g.rotate(box.rot);
+  shapePath(box.w, box.h);
+  g.shadowColor = 'rgba(0,0,0,0.6)'; g.shadowBlur = 40;
+  g.fillStyle = '#111'; g.fill();
+  g.shadowBlur = 0;
+  g.save(); g.clip();
+  if (img) {
+    const s = Math.max(box.w / img.width, box.h / img.height);
+    g.drawImage(img, -img.width * s / 2, -img.height * s / 2, img.width * s, img.height * s);
+  }
+  g.restore();
+  if (S.imgBorder) { g.strokeStyle = S.accent; g.lineWidth = 4; g.globalAlpha = 0.6 + pulse * 0.4; g.stroke(); }
+  g.restore();
+}
+
+function drawViz(box) {
+  const accent = S.accent;
+  g.save();
+  g.strokeStyle = g.fillStyle = accent;
+  g.shadowColor = accent; g.shadowBlur = 25;
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  if (S.viz === 'circleBars') {
+    const R = box.r + 14, step = Math.PI / barsHalf;
+    g.lineWidth = 2 * Math.PI * box.r / (barsHalf * 2) * 0.55;
+    g.beginPath();
+    for (let i = 0; i < barsHalf; i++) {
+      const len = 6 + barVals[i] * 220;
+      for (const side of [1, -1]) {
+        const ang = -Math.PI / 2 + side * (i + 0.5) * step, c = Math.cos(ang), s = Math.sin(ang);
+        g.moveTo(CX + c * R, box.cy + s * R);
+        g.lineTo(CX + c * (R + len), box.cy + s * (R + len));
+      }
+    }
+    g.stroke();
+  } else if (S.viz === 'circleWave') {
+    const R = box.r + 10, pts = barsHalf * 2;
+    g.beginPath();
+    for (let j = 0; j <= pts; j++) {
+      const i = j % pts, idx = i < barsHalf ? i : pts - 1 - i;
+      const ang = -Math.PI / 2 + (i + 0.5) / pts * Math.PI * 2;
+      const rr = R + 4 + barVals[idx] * 160;
+      const x = CX + Math.cos(ang) * rr, y = box.cy + Math.sin(ang) * rr;
+      j ? g.lineTo(x, y) : g.moveTo(x, y);
+    }
+    g.closePath();
+    g.globalAlpha = 0.25; g.fill();
+    g.globalAlpha = 1; g.lineWidth = 4; g.stroke();
+  } else if (S.viz === 'bottomBars') {
+    const n = 64, gap = 6, total = W - 160, bw = (total - gap * (n * 2 - 1)) / (n * 2), base = H - 64;
+    g.beginPath();
+    for (let j = 0; j < n * 2; j++) {
+      const i = j < n ? n - 1 - j : j - n;
+      const v = barVals[Math.floor(i * barsHalf / n)];
+      const hh = 4 + v * 200;
+      g.roundRect(80 + j * (bw + gap), base - hh, bw, hh, bw / 2);
+    }
+    g.fill();
+  } else if (S.viz === 'wave') {
+    const N = 480, amp = 260 * S.sens;
+    g.lineWidth = 3;
+    g.beginPath();
+    for (let j = 0; j <= N; j++) {
+      const v = (wave[Math.floor(j / N * (wave.length - 1))] - 128) / 128;
+      const edge = Math.sin(j / N * Math.PI); // 両端は0に収束させる
+      const x = j / N * W, y = box.cy + v * amp * edge;
+      j ? g.lineTo(x, y) : g.moveTo(x, y);
+    }
+    g.stroke();
+  }
+  g.restore();
+}
+
+const FONTS = { gothic: '"Yu Gothic UI", "Meiryo", sans-serif', mincho: '"Yu Mincho", "游明朝", "MS Mincho", serif', mono: '"Consolas", "MS Gothic", monospace' };
+function textLayout(box) {
+  let x = 80, y1 = H - 110, y2 = H - 62, align = 'left';
+  if (S.textPos === 'topLeft') { y1 = 120; y2 = 168; }
+  else if (S.textPos === 'underImage') { x = CX; align = 'center'; y1 = box.cy + box.h / 2 + 100; y2 = y1 + 48; }
+  return { x, y1, y2, align };
+}
+function textAnchor(box) {
+  const { x, y1, y2, align } = textLayout(box);
+  g.save(); g.font = `bold 60px ${FONTS[S.font]}`;
+  const w = Math.max(g.measureText($('title').value).width, 200);
+  g.restore();
+  return [align === 'left' ? x + w / 2 : x, (y1 + y2) / 2 - 18];
+}
+function drawText(box) {
+  if (S.textPos === 'hidden') return;
+  const f = FONTS[S.font];
+  const { x, y1, y2, align } = textLayout(box);
+  g.save();
+  g.textAlign = align;
+  g.shadowColor = 'rgba(0,0,0,0.8)'; g.shadowBlur = 16;
+  g.fillStyle = '#fff';
+  g.font = `bold 60px ${f}`;
+  g.fillText($('title').value, x, y1);
+  g.fillStyle = 'rgba(255,255,255,0.75)';
+  g.font = `34px ${f}`;
+  g.fillText($('artist').value, x + (align === 'left' ? 2 : 0), y2);
+  g.restore();
+}
+
+function drawOverlay() {
+  if (S.overlay === 'film') {
+    g.save();
+    g.globalAlpha = 0.09;
+    g.fillStyle = noisePatterns[Math.floor(Math.random() * noisePatterns.length)];
+    g.translate(Math.random() * 256, Math.random() * 256);
+    g.fillRect(-256, -256, W + 512, H + 512);
+    g.restore();
+    g.fillStyle = 'rgba(255, 200, 140, 0.05)'; g.fillRect(0, 0, W, H);
+    if (Math.random() < 0.08) { g.fillStyle = 'rgba(255,255,255,0.12)'; g.fillRect(Math.random() * W, 0, 1.5, H); }
+  } else if (S.overlay === 'scanline') {
+    g.fillStyle = scanPattern; g.globalAlpha = 0.35; g.fillRect(0, 0, W, H); g.globalAlpha = 1;
+  }
+  if (S.overlay === 'vignette' || S.overlay === 'film') {
+    const vg = g.createRadialGradient(CX, CY, H * 0.35, CX, CY, W * 0.62);
+    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.85)');
+    g.fillStyle = vg; g.fillRect(0, 0, W, H);
+  }
+}
+
+// 重ねる動画を曲の再生位置に合わせる
+function syncVideo() {
+  if (!ovVideo) return false;
+  const target = curTime() + S.vidOffset;
+  if (!playing) { if (!ovVideo.paused) ovVideo.pause(); return true; }
+  if (target < 0 || target > ovVideo.duration) { if (!ovVideo.paused) ovVideo.pause(); return false; }
+  if (ovVideo.paused) { ovVideo.currentTime = target; ovVideo.play().catch(() => {}); }
+  else if (Math.abs(ovVideo.currentTime - target) > 0.12) ovVideo.currentTime = target; // ずれたら合わせ直す
+  return true;
+}
+
+function drawVideo(visible, L) {
+  if (!visible || !ovVideo || ovVideo.readyState < 2) return;
+  const vw = ovVideo.videoWidth, vh = ovVideo.videoHeight;
+  if (!vw) return;
+  const fit = (S.vidFit === 'cover' ? Math.max : Math.min)(W / vw, H / vh);
+  drawPlaced(ovVideo, vw, vh, fit, L, { opacity: S.vidOpacity, blend: S.vidBlend, fh: S.vidFlipH, fv: S.vidFlipV, mirror: S.vidMirror });
+}
+
+// 絵（動画・Studio の絵）をレイヤーの配置どおりに置く。反転・鏡写しの複製つき
+function drawPlaced(srcImg, vw, vh, fit, L, o) {
+  const s = fit * L.sc;
+  g.globalAlpha = o.opacity;
+  g.globalCompositeOperation = o.blend;
+  const one = (x, y, rot, fh, fv) => {
+    g.save();
+    g.translate(CX + x, CY + y);
+    g.rotate(rot * Math.PI / 180);
+    g.scale(fh ? -1 : 1, fv ? -1 : 1);
+    g.drawImage(srcImg, -vw * s / 2, -vh * s / 2, vw * s, vh * s);
+    g.restore();
+  };
+  const { x, y, rot: r } = L, { fh, fv, mirror: m } = o;
+  one(x, y, r, fh, fv);
+  // 複製は中心線で鏡写しにする（回転も逆向き）
+  if (m === 'h' || m === 'both') one(-x, y, -r, !fh, fv);
+  if (m === 'v' || m === 'both') one(x, -y, -r, fh, !fv);
+  if (m === 'both') one(-x, -y, r, !fh, !fv);
+}
+
+function fmtCounter(sec, tenths) {
+  sec = Math.max(0, sec);
+  const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+  return tenths ? String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0') + '.' + Math.floor(sec * 10 % 10)
+                : m + ':' + String(s).padStart(2, '0');
+}
+
+function barGeom(ct, dur) {
+  const top = S.barPos === 'top';
+  let x0 = 80, x1 = W - 80;
+  if (S.counter === 'inline') { x0 += 90; x1 -= 90; } // バーの両端に時間を置くぶん短くする
+  const y = top ? 44 : H - 36;
+  return { top, x0, x1, y, hx: x0 + (x1 - x0) * (dur ? ct / dur : 0), ty: top ? y + 40 : y - 34 };
+}
+
+function drawBar(ct, dur) {
+  if (!dur || !S.progressBar) return;
+  const { x0, x1, y, hx } = barGeom(ct, dur);
+  g.save();
+  if (S.barStyle === 'thick') {
+    g.fillStyle = 'rgba(255,255,255,0.18)'; g.beginPath(); g.roundRect(x0, y - 5, x1 - x0, 10, 5); g.fill();
+    g.fillStyle = S.accent; g.beginPath(); g.roundRect(x0, y - 5, Math.max(10, hx - x0), 10, 5); g.fill();
+  } else if (S.barStyle === 'glow') {
+    g.fillStyle = 'rgba(255,255,255,0.15)'; g.fillRect(x0, y - 2, x1 - x0, 4);
+    g.shadowColor = S.accent; g.shadowBlur = 18;
+    g.fillStyle = S.accent; g.fillRect(x0, y - 3, hx - x0, 6);
+    g.beginPath(); g.arc(hx, y, 9 + pulse * 3, 0, Math.PI * 2); g.fillStyle = '#fff'; g.fill();
+  } else {
+    g.fillStyle = 'rgba(255,255,255,0.15)'; g.fillRect(x0, y - 2, x1 - x0, 4);
+    g.fillStyle = S.accent; g.fillRect(x0, y - 2, hx - x0, 4);
+  }
+  g.restore();
+}
+
+// カウンターの吹き出し位置（バーの先端に合わせ、画面からはみ出さないよう寄せる）
+function bubbleBox(geo, txtW) {
+  const bw = txtW + 28, bh = 40;
+  return { bw, bh, bx: Math.min(Math.max(geo.hx - bw / 2, 20), W - 20 - bw), by: geo.top ? geo.y + 18 : geo.y - 18 - bh };
+}
+
+function counterAnchor(ct, dur) {
+  const geo = barGeom(ct, dur);
+  if (S.counter === 'inline') return [W / 2, geo.y];
+  if (S.counter === 'bubble') return [geo.hx, geo.top ? geo.y + 38 : geo.y - 38];
+  return [geo.x1 - 80, geo.ty];
+}
+
+function drawCounter(ct, dur) {
+  if (!dur || S.counter === 'none') return;
+  const geo = barGeom(ct, dur), { x0, x1, y, hx, top, ty } = geo;
+  const f = FONTS[S.font];
+  g.save();
+  g.textBaseline = 'middle';
+  g.shadowColor = 'rgba(0,0,0,0.7)'; g.shadowBlur = 10;
+  if (S.counter === 'inline') {
+    g.font = `600 28px ${f}`; g.fillStyle = '#fff';
+    g.textAlign = 'right'; g.fillText(fmtCounter(ct), x0 - 20, y + 1);
+    g.textAlign = 'left'; g.fillText(fmtCounter(dur), x1 + 20, y + 1);
+  } else if (S.counter === 'simple' || S.counter === 'remain') {
+    g.font = `600 30px ${f}`; g.fillStyle = '#fff'; g.textAlign = 'right';
+    g.fillText(S.counter === 'simple' ? fmtCounter(ct) + ' / ' + fmtCounter(dur) : '-' + fmtCounter(dur - ct), x1, ty);
+  } else if (S.counter === 'digital') {
+    const txt = fmtCounter(ct, true);
+    g.font = `bold 34px ${FONTS.mono}`;
+    const tw = g.measureText(txt).width, bw = tw + 36, bh = 52, bx = x1 - bw, by = ty - bh / 2;
+    g.shadowBlur = 0;
+    g.fillStyle = 'rgba(0,0,0,0.55)'; g.beginPath(); g.roundRect(bx, by, bw, bh, 8); g.fill();
+    g.strokeStyle = S.accent; g.lineWidth = 2; g.stroke();
+    g.shadowColor = S.accent; g.shadowBlur = 12;
+    g.fillStyle = S.accent; g.textAlign = 'center'; g.fillText(txt, bx + bw / 2, ty + 2);
+  } else if (S.counter === 'bubble') {
+    const txt = fmtCounter(ct);
+    g.font = `bold 26px ${f}`;
+    const { bw, bh, bx, by } = bubbleBox(geo, g.measureText(txt).width);
+    g.fillStyle = S.accent; g.beginPath(); g.roundRect(bx, by, bw, bh, bh / 2); g.fill();
+    // 先端を指す小さな三角
+    g.beginPath();
+    if (top) { g.moveTo(hx - 7, by); g.lineTo(hx + 7, by); g.lineTo(hx, by - 8); }
+    else { g.moveTo(hx - 7, by + bh); g.lineTo(hx + 7, by + bh); g.lineTo(hx, by + bh + 8); }
+    g.fill();
+    g.shadowBlur = 0; g.fillStyle = '#05080c'; g.textAlign = 'center'; g.fillText(txt, bx + bw / 2, by + bh / 2 + 1);
+  }
+  g.restore();
+}
+
+// 各レイヤーの回転・拡大の軸
+function layerPivot(id, box, ct, dur) {
+  if (id === 'viz' || id === 'image') return [CX, box.cy];
+  if (id === 'text') return textAnchor(box);
+  if (id === 'progress') return [W / 2, barGeom(ct, dur).y];
+  if (id === 'counter') return counterAnchor(ct, dur);
+  return [CX, CY];
+}
+
+let last = performance.now();
+function render(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  const t = now / 1000;
+  analyse(dt);
+
+  g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+
+  // 揺れ量はコマごとに1回だけ決め、「揺れ ON」の全レイヤーで共有する
+  const sh = S.shake * flash * 14;
+  const zp = 1 + S.punch * flash * 0.035;
+  const ox = (Math.random() - 0.5) * sh, oy = (Math.random() - 0.5) * sh;
+  const box = imageBox(t);
+  const dur = audioBuf ? audioBuf.duration : 0, ct = Math.min(curTime(), dur);
+  const videoVisible = syncVideo();
+
+  for (const L of S.layers) {
+    if (L.id === 'flash') {
+      const fl = flash * S.flash * 0.35;
+      if (fl > 0.01) { g.fillStyle = 'rgba(255,255,255,' + fl + ')'; g.fillRect(0, 0, W, H); }
+      continue;
+    }
+    g.save();
+    if (L.beat) { g.translate(CX + ox, CY + oy); g.scale(zp, zp); g.translate(-CX, -CY); }
+    // レイヤーごとの配置（重ねる動画は複製の鏡写しがあるので drawVideo 側で扱う）
+    if (L.id !== 'video' && studioSlotOf(L.id) < 0 && (L.x || L.y || L.sc !== 1 || L.rot)) {
+      const [px, py] = layerPivot(L.id, box, ct, dur);
+      g.translate(px + L.x, py + L.y); g.rotate(L.rot * Math.PI / 180); g.scale(L.sc, L.sc); g.translate(-px, -py);
+    }
+    switch (L.id) {
+      case 'bg': drawBackground(t); break;
+      case 'particles': drawParticles(t, dt); break;
+      case 'viz': drawViz(box); break;
+      case 'image': drawImage(box); break;
+      case 'text': drawText(box); break;
+      case 'overlay': drawOverlay(); break;
+      case 'video': drawVideo(videoVisible, L); break;
+      case 'studio': case 'studio2': case 'studio3': case 'studio4': {
+        const slot = studioSlotOf(L.id), P = k => S[stKey(k, slot)];
+        if (renderStudio(dt, box, slot)) drawPlaced(stSlots[slot].canvas, W, H, 1, L, { opacity: P('stOpacity'), blend: 'source-over', fh: P('stFlipH'), fv: P('stFlipV'), mirror: P('stMirror') });
+        break;
+      }
+      case 'progress': drawBar(ct, dur); break;
+      case 'counter': drawCounter(ct, dur); break;
+    }
+    g.restore();
+  }
+
+  $('vidOffsetVal').textContent = S.vidOffset.toFixed(2);
+  $('beatLamp').style.opacity = 0.12 + flash * 0.88;
+  $('prog').style.width = dur ? (ct / dur * 100) + '%' : '0';
+  $('time').textContent = fmt(ct) + ' / ' + fmt(dur);
+}
+function loop(now) { if (!exportTrack && !exp) render(now); requestAnimationFrame(loop); } // 書き出し中は専用タイマー側で描く
+
+buildTemplateUI();
+applySettings(TEMPLATES['EDM サークル']);
+markTpl($('tpls').children[0]);
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
