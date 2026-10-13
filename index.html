@@ -106,7 +106,7 @@
       <button id="projNew" class="small">🆕 新しく始める</button>
       <input id="projFile" type="file" accept=".coverpulse" hidden>
     </div>
-    <div id="autosaveNote" class="note" style="margin-top:-6px">作業内容はこのブラウザに自動で保存され、次に開いた時に続きから再開します。</div>
+    <div id="autosaveNote" class="note" style="margin-top:-6px">作業内容はこのブラウザの中に自動で保存され、次に開いた時に続きから再開します（ファイルとしては見えません）。別のPCに移す・バックアップする時は「💾 プロジェクトを保存」で .coverpulse ファイルにしてください。</div>
 
     <div class="row">
       <label>曲名<input id="title" type="text" placeholder="Title"></label>
@@ -1398,6 +1398,9 @@ $('installBtn').onclick = async () => {
 (function checkEnv() {
   const msgs = [];
   const mobile = matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 820;
+  // アプリの中に組み込まれたブラウザ（Claude アプリ内など）は、ファイルの保存ができないことがある
+  if (/(^|[^A-Za-z])(Claude|Electron)\//.test(navigator.userAgent))
+    msgs.push('このブラウザでは、動画やプロジェクトのファイルを保存できないことがあります。書き出し・プロジェクト保存は Chrome / Edge か、インストールした CoverPulse で行ってください。');
   if (mobile) msgs.push('スマホ・タブレットでは動作が重く、書き出しに失敗することがあります。PCでのご利用をおすすめします。');
   if (!window.MediaRecorder || !window.AudioContext) msgs.push('このブラウザは動画の書き出しに対応していません。PC版の Chrome または Edge をお使いください。');
   else if (!window.VideoEncoder) msgs.push('このブラウザでは簡易方式で書き出します。書き出し中はこのタブを表示したままにしてください。安定して書き出すには Chrome / Edge をおすすめします。');
@@ -1526,12 +1529,13 @@ $('projSave').onclick = async () => {
     try {
       const h = await showSaveFilePicker({ suggestedName: name, types: [{ description: 'CoverPulse プロジェクト', accept: { 'application/octet-stream': ['.coverpulse'] } }] });
       const w = await h.createWritable(); await w.write(blob); await w.close();
-      setStatus('プロジェクトを保存しました: ' + h.name + '（' + (blob.size / 1048576).toFixed(1) + ' MB）');
+      setStatus('プロジェクトを保存しました: ' + h.name + '（' + (blob.size / 1048576).toFixed(1) + ' MB）。保存先は、さきほどの画面で選んだフォルダです。');
       return;
-    } catch (e) { if (e.name === 'AbortError') return; }
+    } catch (e) { if (e.name === 'AbortError') { setStatus('プロジェクトの保存をキャンセルしました'); return; } }
   }
   downloadBlob(blob, name);
-  setStatus('プロジェクトをダウンロードフォルダに保存しました: ' + name + '（' + (blob.size / 1048576).toFixed(1) + ' MB）');
+  setStatus('プロジェクトを「ダウンロード」フォルダに保存しました: ' + name + '（' + (blob.size / 1048576).toFixed(1) + ' MB）。' +
+            'ブラウザのダウンロード一覧（Ctrl+J）からも開けます。');
 };
 $('projOpen').onclick = () => $('projFile').click();
 $('projFile').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) openProject(f); };
@@ -2005,11 +2009,11 @@ async function saveExport() {
   if (handle) {
     try {
       const w = await handle.createWritable(); await w.write(blob); await w.close();
-      return '保存しました: ' + handle.name;
+      return '保存しました: ' + handle.name + '（保存先は、書き出し前に選んだフォルダです）';
     } catch (e) { /* 書き込めなければ通常のダウンロードに切り替える */ }
   }
   downloadBlob(blob, name);
-  return 'ダウンロードフォルダに保存しました: ' + name;
+  return '「ダウンロード」フォルダに保存しました: ' + name + '（ブラウザのダウンロード一覧 Ctrl+J からも開けます）';
 }
 
 // 書き出し中の描画は専用タイマーで回す。
