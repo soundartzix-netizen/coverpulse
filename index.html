@@ -179,7 +179,8 @@
       <summary>Studio ビジュアライザー</summary>
       <div>
         <div class="tpls" id="stSlots" style="grid-template-columns: 1fr 1fr"></div>
-        <div class="note" style="margin-top:-4px">4つまで同時に使えます（例: HALO と AURORA）。ボタンで編集するスロットを切り替えます。</div>
+        <div class="note" style="margin-top:-4px">「＋ 追加」でいくつでも重ねられます（増やすほど重くなります）。ボタンで編集するスロットを切り替えます。</div>
+        <button id="stRemove" class="small">このスロットを削除</button>
         <label>スタイル
           <select data-k="stStyle">
             <option value="none">使わない</option>
@@ -432,24 +433,26 @@ const BASE = {
   barStyle: 'thin', barPos: 'bottom', counter: 'none',
   vidBlend: 'source-over', vidFit: 'cover', vidOpacity: 1, vidOffset: 0,
   vidFlipH: false, vidFlipV: false, vidMirror: 'none',
-  stStyle: 'none', stPal: 'accent', stFit: true, stSens: 0.5, stAmount: 1, stSmooth: 0.35, stSize: 1,
-  stGlow: 1, stSpeed: 1, stDensity: 1, stOpacity: 1, stFlipH: false, stFlipV: false, stMirror: 'none',
+  // Studio ビジュアライザーのスロット（いくつでも）。レイヤーの id は 'st' + スロットの id
+  slots: [{ id: 1, stStyle: 'none' }],
   // 下から順に描く。beat: ビートで揺れ・ズームパンチするか
   layers: [
-    { id: 'bg', beat: true }, { id: 'particles', beat: true }, { id: 'viz', beat: false }, { id: 'studio', beat: false }, { id: 'studio2', beat: false }, { id: 'studio3', beat: false }, { id: 'studio4', beat: false },
+    { id: 'bg', beat: true }, { id: 'particles', beat: true }, { id: 'viz', beat: false }, { id: 'st1', beat: false },
     { id: 'video', beat: false }, { id: 'image', beat: false },
     { id: 'flash' }, { id: 'overlay', beat: false }, { id: 'text', beat: false }, { id: 'progress', beat: false }, { id: 'counter', beat: false },
   ],
 };
-// Studio の設定キー。スロット2〜4は末尾に番号を付けたキー（stStyle2 など）に入る
-const STUDIO_KEYS = ['stStyle', 'stPal', 'stFit', 'stSens', 'stAmount', 'stSmooth', 'stSize', 'stGlow', 'stSpeed',
-                     'stDensity', 'stOpacity', 'stFlipH', 'stFlipV', 'stMirror'];
-const ST_SLOTS = 4;
-for (let i = 1; i < ST_SLOTS; i++) for (const k of STUDIO_KEYS) BASE[k + (i + 1)] = BASE[k];
-let stSlot = 0;
-const stKey = (k, slot = stSlot) => STUDIO_KEYS.includes(k) && slot ? k + (slot + 1) : k;
-const studioSlotOf = id => id === 'studio' ? 0 : /^studio\d$/.test(id) ? +id.slice(6) - 1 : -1;
-const LAYER_NAMES = { bg: '背景', particles: 'パーティクル', viz: 'ビジュアライザー', studio: 'Studio スロット1', studio2: 'Studio スロット2', studio3: 'Studio スロット3', studio4: 'Studio スロット4', video: '重ねる動画', image: '中央の画像',
+// Studio スロット1つぶんの設定
+const SLOT_DEFAULT = { stStyle: 'halo', stPal: 'accent', stFit: true, stSens: 0.5, stAmount: 1, stSmooth: 0.35, stSize: 1,
+                       stGlow: 1, stSpeed: 1, stDensity: 1, stOpacity: 1, stFlipH: false, stFlipV: false, stMirror: 'none' };
+const STUDIO_KEYS = Object.keys(SLOT_DEFAULT);
+BASE.slots = [{ ...SLOT_DEFAULT, id: 1, stStyle: 'none' }];
+let stSlot = 0; // 編集中のスロット（S.slots の番号）
+const curSlot = () => S.slots[Math.min(stSlot, S.slots.length - 1)];
+const isStudioLayer = id => /^st\d+$/.test(id);
+const slotOfLayer = id => S.slots.find(sl => 'st' + sl.id === id);
+const STYLE_NAMES = { none: 'なし', halo: 'HALO', aurora: 'AURORA', stardust: 'STARDUST', matrix: 'MATRIX', prism: 'PRISM' };
+const LAYER_NAMES = { bg: '背景', particles: 'パーティクル', viz: 'ビジュアライザー', video: '重ねる動画', image: '中央の画像',
                       text: '文字', progress: '再生位置バー', counter: '秒数カウンター', overlay: '質感', flash: '⚡ フラッシュ' };
 // テンプレート用: 指定したレイヤーだけ「揺れ ON」にした配列を作る
 const beatLayers = on => BASE.layers.map(l => l.id === 'flash' ? { ...l } : { ...l, beat: on.includes(l.id) });
@@ -494,54 +497,122 @@ const TEMPLATES = {
                 viz: 'bottomBars', sens: 0.9, particles: 'none', shake: 0, flash: 0, textPos: 'topLeft', progressBar: false },
 };
 const S = { ...BASE };
+function layerName(id) {
+  if (!isStudioLayer(id)) return LAYER_NAMES[id];
+  const i = S.slots.findIndex(sl => 'st' + sl.id === id);
+  return 'Studio ' + (i + 1) + '：' + (STYLE_NAMES[S.slots[i] && S.slots[i].stStyle] || '');
+}
+
+// 以前の形式（stStyle / stStyle2〜4 と レイヤー studio / studio2〜4）を、スロット配列に移し替える
+function migrateStudio(obj) {
+  let layers = (obj.layers || BASE.layers).map(l => ({ ...l })), slots;
+  if (Array.isArray(obj.slots) && obj.slots.length) {
+    slots = obj.slots.map(sl => ({ ...SLOT_DEFAULT, ...sl }));
+  } else {
+    slots = [];
+    for (let i = 1; i <= 4; i++) {
+      const sfx = i === 1 ? '' : String(i), style = obj['stStyle' + sfx];
+      if (i > 1 && (!style || style === 'none')) continue;
+      const sl = { id: i };
+      for (const k of STUDIO_KEYS) sl[k] = obj[k + sfx] !== undefined ? obj[k + sfx] : SLOT_DEFAULT[k];
+      if (style === undefined) sl.stStyle = 'none';
+      slots.push(sl);
+    }
+    layers = layers.map(l => l.id === 'studio' ? { ...l, id: 'st1' } : /^studio\d$/.test(l.id) ? { ...l, id: 'st' + l.id.slice(6) } : l);
+  }
+  if (!slots.length) slots = [{ ...SLOT_DEFAULT, id: 1, stStyle: 'none' }];
+  // id の重複をなくす
+  const seen = new Set();
+  for (const sl of slots) { while (seen.has(sl.id)) sl.id++; seen.add(sl.id); }
+  return { slots, layers };
+}
 const LS_KEY = 'mvmaker.templates';
 
 function loadMyTemplates() { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch { return {}; } }
 function saveMyTemplates(t) { try { localStorage.setItem(LS_KEY, JSON.stringify(t)); return true; } catch { return false; } }
 
 // 古い保存データなどで欠けたレイヤーがあれば補う
-function normalizeLayers(list) {
-  const out = (list || []).filter(l => LAYER_NAMES[l.id]).map(l => ({ x: 0, y: 0, sc: 1, rot: 0, ...l }));
-  BASE.layers.forEach((l, i) => { if (!out.some(o => o.id === l.id)) out.splice(Math.min(i, out.length), 0, { x: 0, y: 0, sc: 1, rot: 0, ...l }); });
+function normalizeLayers(list, slots) {
+  const ok = id => LAYER_NAMES[id] || (isStudioLayer(id) && slots.some(sl => 'st' + sl.id === id));
+  const out = (list || []).filter(l => ok(l.id)).filter((l, i, a) => a.findIndex(o => o.id === l.id) === i)
+    .map(l => ({ x: 0, y: 0, sc: 1, rot: 0, ...l }));
+  BASE.layers.forEach((l, i) => {
+    if (!isStudioLayer(l.id) && !out.some(o => o.id === l.id)) out.splice(Math.min(i, out.length), 0, { x: 0, y: 0, sc: 1, rot: 0, ...l });
+  });
+  // レイヤーが無いスロットは、ビジュアライザーのすぐ上に足す
+  for (const sl of slots) if (!out.some(o => o.id === 'st' + sl.id)) {
+    const at = out.findIndex(o => o.id === 'viz') + 1;
+    out.splice(at, 0, { id: 'st' + sl.id, beat: false, x: 0, y: 0, sc: 1, rot: 0 });
+  }
   return out;
 }
 
 function applySettings(obj) {
   Object.assign(S, BASE, obj);
-  S.layers = normalizeLayers(obj.layers || BASE.layers);
+  const st = migrateStudio(obj);
+  S.slots = st.slots;
+  S.layers = normalizeLayers(st.layers, S.slots);
+  for (const k of Object.keys(S)) if (/^st[A-Z]/.test(k)) delete S[k]; // 以前の形式の項目は残さない
+  stSlot = 0;
   // 以前の保存データ（重ねる動画だけに配置があった頃）からの引き継ぎ
   if (obj.vidX !== undefined) Object.assign(layerById('video'), { x: obj.vidX || 0, y: obj.vidY || 0, sc: obj.vidScale || 1, rot: obj.vidRot || 0 });
   buildLayerUI();
   updateXformUI();
   for (const el of document.querySelectorAll('[data-k]')) {
-    const k = stKey(el.dataset.k);
-    if (el.type === 'checkbox') el.checked = !!S[k]; else el.value = S[k];
+    if (STUDIO_KEYS.includes(el.dataset.k)) continue;
+    if (el.type === 'checkbox') el.checked = !!S[el.dataset.k]; else el.value = S[el.dataset.k];
   }
   document.documentElement.style.setProperty('--accent', S.accent);
   particles = [];
-  stSlots.forEach(sl => sl.state = {});
+  stRuntime.clear();
   syncStudioUI();
 }
 
 // Studio 欄の表示を、選択中のスロットの設定に合わせる
 function syncStudioUI() {
+  const cur = curSlot();
   for (const el of document.querySelectorAll('[data-k]')) {
     if (!STUDIO_KEYS.includes(el.dataset.k)) continue;
-    const k = stKey(el.dataset.k);
-    if (el.type === 'checkbox') el.checked = !!S[k]; else el.value = S[k];
+    if (el.type === 'checkbox') el.checked = !!cur[el.dataset.k]; else el.value = cur[el.dataset.k];
   }
-  $('stOpts').hidden = S[stKey('stStyle')] === 'none';
+  $('stOpts').hidden = cur.stStyle === 'none';
+  $('stRemove').disabled = S.slots.length <= 1;
   const box = $('stSlots');
   box.innerHTML = '';
-  stSlots.forEach((_, i) => {
+  S.slots.forEach((sl, i) => {
     const b = document.createElement('button');
-    const st = S[stKey('stStyle', i)];
-    b.textContent = 'スロット' + (i + 1) + '：' + (st === 'none' ? 'なし' : st.toUpperCase());
-    b.classList.toggle('on', i === stSlot);
+    b.textContent = 'スロット' + (i + 1) + '：' + STYLE_NAMES[sl.stStyle];
+    b.classList.toggle('on', sl === cur);
     b.onclick = () => { stSlot = i; syncStudioUI(); };
     box.appendChild(b);
   });
+  const add = document.createElement('button');
+  add.textContent = '＋ 追加';
+  add.onclick = addSlot;
+  box.appendChild(add);
 }
+
+function addSlot() {
+  const id = Math.max(0, ...S.slots.map(sl => sl.id)) + 1;
+  S.slots.push({ ...SLOT_DEFAULT, id });
+  // 一番上にある Studio レイヤーのすぐ上（なければビジュアライザーの上）に置く
+  let at = -1;
+  S.layers.forEach((l, i) => { if (isStudioLayer(l.id)) at = i; });
+  if (at < 0) at = S.layers.findIndex(l => l.id === 'viz');
+  S.layers.splice(at + 1, 0, { id: 'st' + id, beat: false, x: 0, y: 0, sc: 1, rot: 0 });
+  stSlot = S.slots.length - 1;
+  markTpl(null); syncStudioUI(); buildLayerUI();
+}
+$('stRemove').onclick = () => {
+  if (S.slots.length <= 1) return;
+  const sl = curSlot(), lid = 'st' + sl.id;
+  S.slots.splice(S.slots.indexOf(sl), 1);
+  S.layers = S.layers.filter(l => l.id !== lid);
+  stRuntime.delete(sl.id);
+  stSlot = Math.min(stSlot, S.slots.length - 1);
+  if (selLayer === lid) selLayer = 'image';
+  markTpl(null); syncStudioUI(); buildLayerUI(); updateXformUI();
+};
 
 function buildTemplateUI() {
   const box = $('tpls');
@@ -565,7 +636,7 @@ function updateXformUI() {
   $('xform').hidden = none; $('xformNone').hidden = !none;
   cv.classList.toggle('movable', !none);
   if (none) return;
-  $('xfName').textContent = LAYER_NAMES[L.id];
+  $('xfName').textContent = layerName(L.id);
   for (const el of document.querySelectorAll('[data-x]')) el.value = L[el.dataset.x];
   for (const el of document.querySelectorAll('[data-xv]')) {
     const v = L[el.dataset.xv];
@@ -583,7 +654,7 @@ function buildLayerUI() {
     row.className = 'layer' + (L.id === 'flash' ? ' flashLayer' : '') + (L.id === selLayer ? ' sel' : '');
     row.onclick = e => { if (!e.target.closest('button')) selectLayer(L.id); };
     row.draggable = true;
-    row.innerHTML = '<span class="grip">⋮⋮</span><span class="name">' + LAYER_NAMES[L.id] + '</span>';
+    row.innerHTML = '<span class="grip">⋮⋮</span><span class="name">' + layerName(L.id) + '</span>';
     if (L.id !== 'flash') {
       const chip = document.createElement('button');
       chip.className = 'chip' + (L.beat ? ' on' : '');
@@ -634,10 +705,11 @@ $('delTpl').onclick = () => {
 for (const el of document.querySelectorAll('[data-k]')) {
   el.addEventListener('input', () => {
     const k = el.dataset.k;
-    S[stKey(k)] = el.type === 'checkbox' ? el.checked : (el.type === 'range' ? +el.value : el.value);
+    const target = STUDIO_KEYS.includes(k) ? curSlot() : S;
+    target[k] = el.type === 'checkbox' ? el.checked : (el.type === 'range' ? +el.value : el.value);
     if (k === 'accent') document.documentElement.style.setProperty('--accent', S.accent);
     if (k === 'particles') particles = [];
-    if (k === 'stStyle') { stSlots[stSlot].state = {}; syncStudioUI(); }
+    if (k === 'stStyle') { stRuntime.delete(curSlot().id); syncStudioUI(); buildLayerUI(); }
     markTpl(null);
   });
 }
@@ -1176,11 +1248,17 @@ const STYLES = [
   return { Analyzer, STYLES, PALETTES, palColor };
 })();
 // スロットごとに解析器・粒子などの状態・描画先を別々に持つ（同じ解析器を2回進めると動きが速くなるため）
-const stSlots = Array.from({ length: ST_SLOTS }, () => {
-  const canvas = document.createElement('canvas');
-  canvas.width = 1920; canvas.height = 1080;
-  return { analyzer: null, state: {}, time: 0, canvas, ctx: canvas.getContext('2d') };
-});
+const stRuntime = new Map(); // スロットの id → { analyzer, state, time, canvas, ctx }
+function slotRuntime(slot) {
+  let r = stRuntime.get(slot.id);
+  if (!r) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1920; canvas.height = 1080;
+    r = { analyzer: null, state: {}, time: 0, canvas, ctx: canvas.getContext('2d') };
+    stRuntime.set(slot.id, r);
+  }
+  return r;
+}
 const stQuiet = { bands: new Float32Array(96), history: [], bass: 0, mid: 0, high: 0, level: 0, beat: 0, onset: false };
 
 // アクセント色から3色の配色を作る（色相を少しずらす）
@@ -1196,7 +1274,7 @@ let accentPalCache = { key: '', pal: null };
 
 // その時刻の Studio の絵を、スロットのキャンバスに描く
 function renderStudio(dt, box, slot) {
-  const P = k => S[stKey(k, slot)], sl = stSlots[slot];
+  const P = k => slot[k], sl = slotRuntime(slot);
   const style = Studio.STYLES.find(st => st.id === P('stStyle'));
   if (!style) return false;
   let A;
@@ -1214,12 +1292,15 @@ function renderStudio(dt, box, slot) {
   if (P('stPal') === 'accent') {
     if (accentPalCache.key !== S.accent) accentPalCache = { key: S.accent, pal: accentPalette() };
     pal = accentPalCache.pal;
-  } else pal = Studio.PALETTES[+P('stPal')];
+  } else pal = Studio.PALETTES[+P('stPal')] || Studio.PALETTES[0];
   // 中央の画像に合わせる: 円の半径が画像と同じになるようサイズを逆算（PRISM は外側へ大きく広がるので位置だけ合わせる）
   const u = Math.min(W, H) / 1000, base = { halo: 210, stardust: 150 }[style.id];
   const fitPos = P('stFit') && (base || style.id === 'prism'), fitSize = P('stFit') && base;
+  // 中央の画像をレイヤー欄で動かした・拡大した分も含めて合わせる
+  const IL = layerById('image') || { x: 0, y: 0, sc: 1 };
+  const icx = CX + IL.x, icy = box.cy + IL.y, ir = box.r * IL.sc;
   const o = { sens: P('stSens'), amount: P('stAmount'), smooth: P('stSmooth'), glow: P('stGlow'), speed: P('stSpeed'),
-              density: P('stDensity'), size: fitSize ? box.r / (base * u) : P('stSize'), x: 0.5, y: fitPos ? box.cy / H : 0.5,
+              density: P('stDensity'), size: fitSize ? ir / (base * u) : P('stSize'), x: fitPos ? icx / W : 0.5, y: fitPos ? icy / H : 0.5,
               pal, img: null, dt: playing ? dt : 0, time: sl.time };
   sl.ctx.clearRect(0, 0, W, H);
   style.draw(sl.ctx, W, H, A, o, sl.state);
@@ -1290,8 +1371,13 @@ $('tplFile').onchange = async e => {
       if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
       // 知らない項目は捨て、レイヤーは形を確かめてから受け取る
       const clean = {};
-      for (const k of Object.keys(BASE)) if (k in v && k !== 'layers' && typeof v[k] === typeof BASE[k]) clean[k] = v[k];
-      if (Array.isArray(v.layers)) clean.layers = v.layers.filter(l => l && LAYER_NAMES[l.id]).map(l => ({
+      for (const k of Object.keys(BASE)) if (k in v && k !== 'layers' && k !== 'slots' && typeof v[k] === typeof BASE[k]) clean[k] = v[k];
+      const slotClean = src => { const o = {}; for (const k of STUDIO_KEYS) if (typeof src[k] === typeof SLOT_DEFAULT[k]) o[k] = src[k]; return o; };
+      if (Array.isArray(v.slots)) clean.slots = v.slots.slice(0, 64).filter(x => x && typeof x === 'object')
+        .map(x => ({ ...slotClean(x), id: Math.max(1, Math.floor(+x.id) || 1) }));
+      else for (const sfx of ['', '2', '3', '4']) for (const k of STUDIO_KEYS)  // 以前の形式
+        if (typeof v[k + sfx] === typeof SLOT_DEFAULT[k]) clean[k + sfx] = v[k + sfx];
+      if (Array.isArray(v.layers)) clean.layers = v.layers.filter(l => l && (LAYER_NAMES[l.id] || isStudioLayer(l.id) || /^studio\d?$/.test(l.id))).map(l => ({
         id: l.id, beat: !!l.beat, x: +l.x || 0, y: +l.y || 0, sc: +l.sc || 1, rot: +l.rot || 0 }));
       t[String(name).slice(0, 40)] = clean; n++;
     }
@@ -2332,7 +2418,7 @@ function render(now) {
     g.save();
     if (L.beat) { g.translate(CX + ox, CY + oy); g.scale(zp, zp); g.translate(-CX, -CY); }
     // レイヤーごとの配置（重ねる動画は複製の鏡写しがあるので drawVideo 側で扱う）
-    if (L.id !== 'video' && studioSlotOf(L.id) < 0 && (L.x || L.y || L.sc !== 1 || L.rot)) {
+    if (L.id !== 'video' && !isStudioLayer(L.id) && (L.x || L.y || L.sc !== 1 || L.rot)) {
       const [px, py] = layerPivot(L.id, box, ct, dur);
       g.translate(px + L.x, py + L.y); g.rotate(L.rot * Math.PI / 180); g.scale(L.sc, L.sc); g.translate(-px, -py);
     }
@@ -2344,11 +2430,12 @@ function render(now) {
       case 'text': drawText(box); break;
       case 'overlay': drawOverlay(); break;
       case 'video': drawVideo(videoVisible, L); break;
-      case 'studio': case 'studio2': case 'studio3': case 'studio4': {
-        const slot = studioSlotOf(L.id), P = k => S[stKey(k, slot)];
-        if (renderStudio(dt, box, slot)) drawPlaced(stSlots[slot].canvas, W, H, 1, L, { opacity: P('stOpacity'), blend: 'source-over', fh: P('stFlipH'), fv: P('stFlipV'), mirror: P('stMirror') });
-        break;
-      }
+      default:
+        if (isStudioLayer(L.id)) {
+          const sl = slotOfLayer(L.id);
+          if (sl && renderStudio(dt, box, sl))
+            drawPlaced(slotRuntime(sl).canvas, W, H, 1, L, { opacity: sl.stOpacity, blend: 'source-over', fh: sl.stFlipH, fv: sl.stFlipV, mirror: sl.stMirror });
+        }
       case 'progress': drawBar(ct, dur); break;
       case 'counter': drawCounter(ct, dur); break;
     }
