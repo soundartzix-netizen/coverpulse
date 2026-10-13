@@ -100,6 +100,13 @@
     <div id="vidDrop" class="drop">🎞 重ねる動画（任意）<br><small>ビジュアライザー素材など（透明WebM / MP4）</small></div>
     <input id="audFile" type="file" accept="audio/*" hidden>
     <input id="vidFile" type="file" accept="video/*" hidden>
+    <div class="row">
+      <button id="projSave" class="small">💾 プロジェクトを保存</button>
+      <button id="projOpen" class="small">📂 開く</button>
+      <button id="projNew" class="small">🆕 新しく始める</button>
+      <input id="projFile" type="file" accept=".coverpulse" hidden>
+    </div>
+    <div id="autosaveNote" class="note" style="margin-top:-6px">作業内容はこのブラウザに自動で保存され、次に開いた時に続きから再開します。</div>
 
     <div class="row">
       <label>曲名<input id="title" type="text" placeholder="Title"></label>
@@ -404,7 +411,7 @@
     <button id="installBtn" hidden>📥 アプリとしてインストール</button>
     <div id="updateBanner" class="banner" hidden>新しいバージョンがあります。 <button id="updateBtn" class="small">再読み込みして更新</button></div>
     <footer>
-      CoverPulse v1.1 ・ <a href="#" id="termsLink">利用規約・プライバシー</a><br>
+      CoverPulse v1.2 ・ <a href="#" id="termsLink">利用規約・プライバシー</a><br>
       画像・曲・動画はすべてこのブラウザの中で処理され、外部には送信されません。<br>
       推奨: PC版 Chrome / Edge（最新版）
     </footer>
@@ -1342,11 +1349,18 @@ let particles = [];
 
 // ---------- 入力 ----------
 function setStatus(s) { $('status').textContent = s; }
+const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+// 今読み込んでいる素材（自動保存・プロジェクト保存に使う）。ver は差し替えのたびに増える
+const media = { image: null, audio: null, video: null }, mediaVer = { image: 0, audio: 0, video: 0 };
+function setMedia(key, file) { media[key] = file; mediaVer[key]++; }
 
 function loadImage(file) {
   const url = URL.createObjectURL(file);
   const im = new Image();
-  im.onload = () => { img = im; buildBg(); $('imgDrop').classList.add('ok'); $('imgDrop').innerHTML = '🖼 ' + (file.name || '貼り付け画像') + '<br><small>差し替え可</small>'; refresh(); };
+  im.onload = () => {
+    img = im; buildBg(); setMedia('image', file);
+    $('imgDrop').classList.add('ok'); $('imgDrop').innerHTML = '🖼 ' + esc(file.name || '貼り付け画像') + '<br><small>差し替え可</small>'; refresh();
+  };
   im.src = url;
 }
 
@@ -1390,6 +1404,166 @@ $('installBtn').onclick = async () => {
   if (msgs.length) { $('envBanner').innerHTML = msgs.join('<br>'); $('envBanner').hidden = false; }
 })();
 
+// 外から来た設定（テンプレ・プロジェクト）を受け取る前に、知らない項目を捨て、形を確かめる
+function sanitizeSettings(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const clean = {};
+  for (const k of Object.keys(BASE)) if (k in v && k !== 'layers' && k !== 'slots' && typeof v[k] === typeof BASE[k]) clean[k] = v[k];
+  const slotClean = src => { const o = {}; for (const k of STUDIO_KEYS) if (typeof src[k] === typeof SLOT_DEFAULT[k]) o[k] = src[k]; return o; };
+  if (Array.isArray(v.slots)) clean.slots = v.slots.slice(0, 64).filter(x => x && typeof x === 'object')
+    .map(x => ({ ...slotClean(x), id: Math.max(1, Math.floor(+x.id) || 1) }));
+  else for (const sfx of ['', '2', '3', '4']) for (const k of STUDIO_KEYS)  // 以前の形式
+    if (typeof v[k + sfx] === typeof SLOT_DEFAULT[k]) clean[k + sfx] = v[k + sfx];
+  if (Array.isArray(v.layers)) clean.layers = v.layers.filter(l => l && (LAYER_NAMES[l.id] || isStudioLayer(l.id) || /^studio\d?$/.test(l.id))).map(l => ({
+    id: l.id, beat: !!l.beat, x: +l.x || 0, y: +l.y || 0, sc: +l.sc || 1, rot: +l.rot || 0 }));
+  return clean;
+}
+
+// ---------- 作業内容の保存 ----------
+// 曲名や書き出し設定も含めた「今の状態」
+function sessionState() {
+  return { settings: JSON.parse(JSON.stringify(S)), title: $('title').value, artist: $('artist').value,
+           fps: $('fps').value, quality: $('quality').value };
+}
+function applySessionState(st) {
+  const clean = sanitizeSettings(st.settings);
+  if (clean) { applySettings(clean); markTpl(null); }
+  $('title').value = typeof st.title === 'string' ? st.title.slice(0, 200) : '';
+  $('artist').value = typeof st.artist === 'string' ? st.artist.slice(0, 200) : '';
+  if ([...$('fps').options].some(o => o.value === st.fps)) $('fps').value = st.fps;
+  if ([...$('quality').options].some(o => o.value === st.quality)) $('quality').value = st.quality;
+}
+
+// ① 自動保存（IndexedDB）
+const idb = (() => {
+  let dbp = null;
+  const open = () => dbp || (dbp = new Promise((res, rej) => {
+    const r = indexedDB.open('coverpulse', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('session');
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  }));
+  const run = (mode, fn) => open().then(db => new Promise((res, rej) => {
+    const tx = db.transaction('session', mode), st = tx.objectStore('session'), q = fn(st);
+    tx.oncomplete = () => res(q && q.result); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error);
+  }));
+  return {
+    get: k => run('readonly', st => st.get(k)),
+    put: (k, v) => run('readwrite', st => st.put(v, k)),
+    del: k => run('readwrite', st => st.delete(k)),
+    clear: () => run('readwrite', st => st.clear()),
+  };
+})();
+let autosaveOn = false, savedState = '', savedVer = { image: 0, audio: 0, video: 0 }, autosaving = false;
+async function autosave() {
+  if (!autosaveOn || autosaving || exp || recorder) return;
+  autosaving = true;
+  try {
+    const st = JSON.stringify(sessionState());
+    if (st !== savedState) { await idb.put('state', st); savedState = st; }
+    for (const key of ['image', 'audio', 'video']) {
+      if (savedVer[key] === mediaVer[key]) continue;
+      const v = mediaVer[key], f = media[key];
+      if (f) await idb.put(key, { blob: f, name: f.name || key, type: f.type || '' }); else await idb.del(key);
+      savedVer[key] = v;
+    }
+  } catch (e) {
+    autosaveOn = false;
+    $('autosaveNote').textContent = 'このブラウザでは自動保存が使えません（容量不足やプライベートモードなど）。「プロジェクトを保存」をお使いください。';
+  }
+  autosaving = false;
+}
+setInterval(autosave, 1500);
+
+// 起動時: 前回の続きがあれば復元する
+async function restoreSession() {
+  try {
+    const st = await idb.get('state');
+    if (st) {
+      applySessionState(JSON.parse(st));
+      const files = {};
+      for (const key of ['image', 'audio', 'video']) {
+        const rec = await idb.get(key);
+        if (rec && rec.blob) files[key] = new File([rec.blob], rec.name, { type: rec.type });
+      }
+      await loadMediaSet(files);
+      savedState = JSON.stringify(sessionState());
+      savedVer = { ...mediaVer }; // 復元した素材は保存済み扱い（大きな曲を書き直さない）
+      if (Object.keys(files).length || st) setStatus('前回の続きから再開しました。白紙から始めるときは「🆕 新しく始める」を押してください。');
+    }
+    autosaveOn = true;
+  } catch (e) {
+    $('autosaveNote').textContent = 'このブラウザでは自動保存が使えません。「プロジェクトを保存」をお使いください。';
+  }
+}
+
+// 画像・曲・動画をまとめて読み込む（読み込みが終わるまで待つ）
+async function loadMediaSet(files) {
+  const waitFor = key => new Promise(res => {
+    const start = mediaVer[key], t0 = Date.now();
+    const iv = setInterval(() => { if (mediaVer[key] !== start || Date.now() - t0 > 15000) { clearInterval(iv); res(); } }, 50);
+  });
+  if (files.image) { const w = waitFor('image'); loadImage(files.image); await w; }
+  if (files.audio) await loadAudio(files.audio);
+  if (files.video) { const w = waitFor('video'); loadVideo(files.video); await w; }
+}
+
+$('projNew').onclick = async () => {
+  if (!confirm('今の作業内容を消して、白紙から始めますか？\n（プロジェクトファイルに保存したものは消えません）')) return;
+  autosaveOn = false;
+  try { await idb.clear(); } catch (e) {}
+  location.reload();
+};
+
+// ③ プロジェクトファイル（.coverpulse）: 先頭に目印と設定(JSON)、その後ろに素材のデータをそのまま並べる
+const PROJ_MAGIC = 'COVERPULSE1\n';
+$('projSave').onclick = async () => {
+  const files = ['image', 'audio', 'video'].filter(k => media[k]).map(k => ({ key: k, name: media[k].name || k, type: media[k].type || '', size: media[k].size }));
+  const header = new TextEncoder().encode(JSON.stringify({ app: 'CoverPulse', version: 1, ...sessionState(), files }));
+  const len = new Uint8Array(4); new DataView(len.buffer).setUint32(0, header.length);
+  const blob = new Blob([PROJ_MAGIC, len, header, ...files.map(f => media[f.key])], { type: 'application/octet-stream' });
+  const name = (($('title').value || audioName || 'project').replace(/[\\/:*?"<>|]/g, '_')) + '.coverpulse';
+  if (window.showSaveFilePicker) {
+    try {
+      const h = await showSaveFilePicker({ suggestedName: name, types: [{ description: 'CoverPulse プロジェクト', accept: { 'application/octet-stream': ['.coverpulse'] } }] });
+      const w = await h.createWritable(); await w.write(blob); await w.close();
+      setStatus('プロジェクトを保存しました: ' + h.name + '（' + (blob.size / 1048576).toFixed(1) + ' MB）');
+      return;
+    } catch (e) { if (e.name === 'AbortError') return; }
+  }
+  downloadBlob(blob, name);
+  setStatus('プロジェクトをダウンロードフォルダに保存しました: ' + name + '（' + (blob.size / 1048576).toFixed(1) + ' MB）');
+};
+$('projOpen').onclick = () => $('projFile').click();
+$('projFile').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) openProject(f); };
+
+async function openProject(file) {
+  if (recorder) { setStatus('書き出し中はプロジェクトを開けません'); return; }
+  try {
+    const head = new Uint8Array(await file.slice(0, PROJ_MAGIC.length + 4).arrayBuffer());
+    if (new TextDecoder().decode(head.subarray(0, PROJ_MAGIC.length)) !== PROJ_MAGIC) throw new Error('CoverPulse のプロジェクトファイルではありません');
+    const hlen = new DataView(head.buffer).getUint32(PROJ_MAGIC.length);
+    if (hlen > 10 * 1048576) throw new Error('ファイルが壊れています');
+    let pos = PROJ_MAGIC.length + 4;
+    const header = JSON.parse(await file.slice(pos, pos + hlen).text());
+    pos += hlen;
+    if (!header || header.app !== 'CoverPulse') throw new Error('CoverPulse のプロジェクトファイルではありません');
+    const files = {}, kinds = { image: 'image/', audio: 'audio/', video: 'video/' };
+    for (const f of Array.isArray(header.files) ? header.files : []) {
+      if (!f || !kinds[f.key] || files[f.key]) continue;
+      const size = Math.floor(+f.size);
+      if (!(size >= 0) || pos + size > file.size) throw new Error('ファイルが壊れています（素材のデータが足りません）');
+      const type = typeof f.type === 'string' && f.type.startsWith(kinds[f.key]) ? f.type : '';
+      files[f.key] = new File([file.slice(pos, pos + size)], String(f.name || f.key).slice(0, 200), { type });
+      pos += size;
+    }
+    setStatus('プロジェクトを読み込み中…');
+    applySessionState(header);
+    if (!files.video && ovVideo) $('vidRemove').click();
+    await loadMediaSet(files);
+    setStatus('プロジェクトを開きました: ' + file.name);
+  } catch (e) { setStatus('プロジェクトを開けませんでした: ' + e.message); }
+}
+
 // テンプレートの読み込み・書き出し（配布・共有用の .json）
 $('exportTpl').onclick = () => {
   const t = loadMyTemplates();
@@ -1409,17 +1583,8 @@ $('tplFile').onchange = async e => {
     const t = loadMyTemplates();
     let n = 0;
     for (const [name, v] of Object.entries(incoming)) {
-      if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
-      // 知らない項目は捨て、レイヤーは形を確かめてから受け取る
-      const clean = {};
-      for (const k of Object.keys(BASE)) if (k in v && k !== 'layers' && k !== 'slots' && typeof v[k] === typeof BASE[k]) clean[k] = v[k];
-      const slotClean = src => { const o = {}; for (const k of STUDIO_KEYS) if (typeof src[k] === typeof SLOT_DEFAULT[k]) o[k] = src[k]; return o; };
-      if (Array.isArray(v.slots)) clean.slots = v.slots.slice(0, 64).filter(x => x && typeof x === 'object')
-        .map(x => ({ ...slotClean(x), id: Math.max(1, Math.floor(+x.id) || 1) }));
-      else for (const sfx of ['', '2', '3', '4']) for (const k of STUDIO_KEYS)  // 以前の形式
-        if (typeof v[k + sfx] === typeof SLOT_DEFAULT[k]) clean[k + sfx] = v[k + sfx];
-      if (Array.isArray(v.layers)) clean.layers = v.layers.filter(l => l && (LAYER_NAMES[l.id] || isStudioLayer(l.id) || /^studio\d?$/.test(l.id))).map(l => ({
-        id: l.id, beat: !!l.beat, x: +l.x || 0, y: +l.y || 0, sc: +l.sc || 1, rot: +l.rot || 0 }));
+      const clean = sanitizeSettings(v);
+      if (!clean) continue;
       t[String(name).slice(0, 40)] = clean; n++;
     }
     if (!n) throw new Error('読み込めるテンプレートがありませんでした');
@@ -1438,7 +1603,8 @@ async function loadAudio(file) {
   audioName = file.name.replace(/\.[^.]+$/, '');
   if (!$('title').value) $('title').value = audioName;
   $('audDrop').classList.add('ok');
-  $('audDrop').innerHTML = '🎵 ' + file.name + '<br><small>' + fmt(audioBuf.duration) + '</small>';
+  $('audDrop').innerHTML = '🎵 ' + esc(file.name) + '<br><small>' + fmt(audioBuf.duration) + '</small>';
+  setMedia('audio', file);
   refresh();
 }
 
@@ -1450,7 +1616,8 @@ function loadVideo(file) {
   v.onloadeddata = () => {
     ovVideo = v;
     $('vidDrop').classList.add('ok');
-    $('vidDrop').innerHTML = '🎞 ' + file.name + '<br><small>' + (isFinite(v.duration) ? fmt(v.duration) + '・' : '') + '差し替え可</small>';
+    $('vidDrop').innerHTML = '🎞 ' + esc(file.name) + '<br><small>' + (isFinite(v.duration) ? fmt(v.duration) + '・' : '') + '差し替え可</small>';
+    setMedia('video', file);
     $('vidSection').hidden = false;
     selectLayer('video');
     setStatus('重ねる動画を読み込みました。レイヤー欄の「重ねる動画」で重ね順を変えられます。');
@@ -1489,6 +1656,7 @@ cv.addEventListener('pointercancel', endDrag);
 $('vidRemove').onclick = () => {
   if (!ovVideo) return;
   URL.revokeObjectURL(ovVideo.src); ovVideo = null;
+  setMedia('video', null);
   $('vidDrop').classList.remove('ok');
   $('vidDrop').innerHTML = '🎞 重ねる動画（任意）<br><small>ビジュアライザー素材など（透明WebM / MP4）</small>';
   $('vidSection').hidden = true;
@@ -1496,6 +1664,7 @@ $('vidRemove').onclick = () => {
 
 function handleFiles(files) {
   for (const f of files) {
+    if (/\.coverpulse$/i.test(f.name)) { openProject(f); return; }
     if (f.type.startsWith('video/') || /\.(webm|mp4|mov|m4v)$/i.test(f.name)) loadVideo(f);
     else if (f.type.startsWith('image/')) loadImage(f);
     else if (f.type.startsWith('audio/') || /\.(wav|mp3|flac|ogg|m4a|aac)$/i.test(f.name)) loadAudio(f);
@@ -2516,6 +2685,7 @@ function loop(now) {
 buildTemplateUI();
 applySettings(TEMPLATES['EDM サークル']);
 markTpl($('tpls').children[0]);
+restoreSession();
 requestAnimationFrame(loop);
 </script>
 </body>
