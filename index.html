@@ -2230,7 +2230,7 @@ function drawViz(box) {
     g.lineWidth = 3;
     g.beginPath();
     for (let j = 0; j <= N; j++) {
-      const v = (wave[Math.floor(j / N * (wave.length - 1))] - 128) / 128;
+      const v = wave ? (wave[Math.floor(j / N * (wave.length - 1))] - 128) / 128 : 0; // 曲を入れる前は平らな線
       const edge = Math.sin(j / N * Math.PI); // 両端は0に収束させる
       const x = j / N * W, y = box.cy + v * amp * edge;
       j ? g.lineTo(x, y) : g.moveTo(x, y);
@@ -2478,7 +2478,17 @@ function render(now) {
   $('prog').style.width = dur ? (ct / dur * 100) + '%' : '0';
   $('time').textContent = fmt(ct) + ' / ' + fmt(dur);
 }
-function loop(now) { if (!exportTrack && !exp) render(now); requestAnimationFrame(loop); } // 書き出し中は専用タイマー側で描く
+// 書き出し中は専用タイマー側で描く。描画中にエラーが出てもループは止めない（止めると画面が固まる）
+let lastRenderError = '';
+function loop(now) {
+  requestAnimationFrame(loop);
+  if (exportTrack || exp) return;
+  try { render(now); }
+  catch (e) {
+    g.reset ? g.reset() : g.setTransform(1, 0, 0, 1, 0, 0); // 途中で止まった描画の状態を戻す
+    if (e.message !== lastRenderError) { lastRenderError = e.message; console.error('描画エラー', e); }
+  }
+}
 
 buildTemplateUI();
 applySettings(TEMPLATES['EDM サークル']);
