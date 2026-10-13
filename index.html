@@ -564,7 +564,7 @@ function applySettings(obj) {
   }
   document.documentElement.style.setProperty('--accent', S.accent);
   particles = [];
-  stRuntime.clear();
+  resetRuntimes();
   syncStudioUI();
 }
 
@@ -608,7 +608,7 @@ $('stRemove').onclick = () => {
   const sl = curSlot(), lid = 'st' + sl.id;
   S.slots.splice(S.slots.indexOf(sl), 1);
   S.layers = S.layers.filter(l => l.id !== lid);
-  stRuntime.delete(sl.id);
+  releaseRuntime(sl.id);
   stSlot = Math.min(stSlot, S.slots.length - 1);
   if (selLayer === lid) selLayer = 'image';
   markTpl(null); syncStudioUI(); buildLayerUI(); updateXformUI();
@@ -709,7 +709,7 @@ for (const el of document.querySelectorAll('[data-k]')) {
     target[k] = el.type === 'checkbox' ? el.checked : (el.type === 'range' ? +el.value : el.value);
     if (k === 'accent') document.documentElement.style.setProperty('--accent', S.accent);
     if (k === 'particles') particles = [];
-    if (k === 'stStyle') { stRuntime.delete(curSlot().id); syncStudioUI(); buildLayerUI(); }
+    if (k === 'stStyle') { resetRuntime(stRuntime.get(curSlot().id)); syncStudioUI(); buildLayerUI(); }
     markTpl(null);
   });
 }
@@ -1248,26 +1248,44 @@ const STYLES = [
   return { Analyzer, STYLES, PALETTES, palColor };
 })();
 // スロットごとに解析器・粒子などの状態・描画先を別々に持つ（同じ解析器を2回進めると動きが速くなるため）
-const stRuntime = new Map(); // スロットの id → { analyzer, state, time, canvas, ctx }
+// スロットの id → { analyzer, state, time, canvas, ctx }
+// 1920×1080 の描画面は GPU のメモリを食うので、作り直さずに使い回す
+// （切り替えのたびに作ると片付けが追いつかず、上限を超えるとブラウザが描画面を捨てて画面が真っ黒になる）
+const stRuntime = new Map(), canvasPool = [];
 function slotRuntime(slot) {
   let r = stRuntime.get(slot.id);
   if (!r) {
-    const canvas = document.createElement('canvas');
-    canvas.width = 1920; canvas.height = 1080;
+    const canvas = canvasPool.pop() || Object.assign(document.createElement('canvas'), { width: 1920, height: 1080 });
     r = { analyzer: null, state: {}, time: 0, canvas, ctx: canvas.getContext('2d') };
     stRuntime.set(slot.id, r);
   }
   return r;
+}
+function resetRuntime(r) { if (r) { r.analyzer = null; r.state = {}; r.time = 0; } }
+function resetRuntimes() {
+  // 今のスロットにない id の描画面は、使い回し用に戻す
+  for (const id of [...stRuntime.keys()]) if (!S.slots.some(sl => sl.id === id)) releaseRuntime(id);
+  stRuntime.forEach(resetRuntime);
+}
+function releaseRuntime(id) {
+  const r = stRuntime.get(id);
+  if (r) { canvasPool.push(r.canvas); stRuntime.delete(id); }
+}
+
+// 曲の解析（重い前処理）は1曲につき1回だけ行い、スロットはその結果を共有する
+let baseAnalyzer = null;
+function newSlotAnalyzer() {
+  if (!baseAnalyzer || baseAnalyzer.src !== audioBuf) { baseAnalyzer = new Studio.Analyzer(audioBuf); baseAnalyzer.src = audioBuf; }
+  const a = Object.create(baseAnalyzer); // 曲のデータと基準レベルは共有、動きの状態だけスロットごと
+  a.reset();
+  return a;
 }
 const stQuiet = { bands: new Float32Array(96), history: [], bass: 0, mid: 0, high: 0, level: 0, beat: 0, onset: false };
 
 // アクセント色から3色の配色を作る（色相を少しずらす）
 function accentPalette() {
   const h = hexToHue(S.accent);
-  const toHex = (hh, sat, l) => {
-    const c = document.createElement('canvas').getContext('2d');
-    c.fillStyle = `hsl(${hh}, ${sat}%, ${l}%)`; return c.fillStyle;
-  };
+  const toHex = (hh, sat, l) => { g.save(); g.fillStyle = `hsl(${hh}, ${sat}%, ${l}%)`; const c = g.fillStyle; g.restore(); return c; };
   return { name: 'Accent', c: [S.accent, toHex(h + 35, 90, 66), toHex(h - 35, 85, 72)] };
 }
 let accentPalCache = { key: '', pal: null };
@@ -1279,7 +1297,7 @@ function renderStudio(dt, box, slot) {
   if (!style) return false;
   let A;
   if (audioBuf) {
-    if (!sl.analyzer || sl.analyzer.src !== audioBuf) { sl.analyzer = new Studio.Analyzer(audioBuf); sl.analyzer.src = audioBuf; }
+    if (!sl.analyzer || sl.analyzer.src !== audioBuf) sl.analyzer = newSlotAnalyzer();
     A = sl.analyzer.step(curTime(), playing ? dt : 0, { sens: P('stSens'), smooth: P('stSmooth') });
   } else {
     // 曲がない時も静かに動かしておく
@@ -1489,18 +1507,31 @@ function refresh() {
 
 // 背景用の加工済み画像は重いので一度だけ作っておく
 function buildBg() {
-  const make = filter => {
-    const c = document.createElement('canvas');
-    c.width = W; c.height = H;
+  if (!img) return;
+  const make = (c, filter) => {
+    c = c || Object.assign(document.createElement('canvas'), { width: W, height: H });
     const b = c.getContext('2d');
     const s = Math.max(W / img.width, H / img.height) * 1.15;
+    b.clearRect(0, 0, W, H);
     b.filter = filter;
     b.drawImage(img, CX - img.width * s / 2, CY - img.height * s / 2, img.width * s, img.height * s);
+    b.filter = 'none';
     return c;
   };
-  bgBlur = make('blur(28px) brightness(0.45) saturate(1.2)');
-  bgDark = make('brightness(0.3) saturate(0.9)');
+  bgBlur = make(bgBlur, 'blur(28px) brightness(0.45) saturate(1.2)');
+  bgDark = make(bgDark, 'brightness(0.3) saturate(0.9)');
 }
+
+// 万一ブラウザが描画面を捨てても、戻ってきたら作り直して表示を復帰させる
+cv.addEventListener('contextlost', () => setStatus('表示が一時的に止まりました。自動で復帰します…'));
+cv.addEventListener('contextrestored', () => { buildBg(); resetRuntimes(); setStatus('表示を復帰しました'); });
+function checkLostCanvases() {
+  // スロットや背景の描画面が捨てられていたら作り直す
+  for (const [id, r] of stRuntime) if (r.ctx.isContextLost && r.ctx.isContextLost()) stRuntime.delete(id);
+  for (let i = canvasPool.length - 1; i >= 0; i--) { const c = canvasPool[i].getContext('2d'); if (c.isContextLost && c.isContextLost()) canvasPool.splice(i, 1); }
+  if (bgBlur && bgBlur.getContext('2d').isContextLost && bgBlur.getContext('2d').isContextLost()) { bgBlur = bgDark = null; buildBg(); }
+}
+setInterval(checkLostCanvases, 2000);
 
 // 質感用の素材
 const sprite = (() => {
