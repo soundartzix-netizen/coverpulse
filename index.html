@@ -238,6 +238,27 @@
       </div>
     </details>
 
+    <details id="fxSection" open>
+      <summary>追加エフェクト</summary>
+      <div>
+        <div id="fxNoPack" class="note">縁取り・グリッチ・万華鏡などの追加エフェクトパックを
+          <a href="https://soundartz.booth.pm" target="_blank" rel="noopener" style="color:var(--accent)">BOOTH</a> で配布しています。</div>
+        <button id="fxLoad" class="small">📦 エフェクトパックを読み込む（.cpfx）</button>
+        <input id="fxFile" type="file" accept=".cpfx" hidden>
+        <div id="fxPacks" class="note"></div>
+        <div id="fxEditor" hidden>
+          <div class="row">
+            <select id="fxAddSel"></select>
+            <button id="fxAdd" class="small" style="flex:0">＋ 追加</button>
+          </div>
+          <div id="fxList" class="tpls" style="grid-template-columns: 1fr 1fr"></div>
+          <div id="fxParams" style="display:flex; flex-direction:column; gap:10px; margin-top:10px"></div>
+          <button id="fxRemove" class="small" style="margin-top:10px">このエフェクトを削除</button>
+        </div>
+        <div class="note">エフェクトパックはプログラムです。作者（Sound Artz）が配布したものだけを読み込んでください。</div>
+      </div>
+    </details>
+
     <details>
       <summary>パーティクル</summary>
       <div>
@@ -453,6 +474,8 @@ const BASE = {
   vidFlipH: false, vidFlipV: false, vidMirror: 'none',
   // Studio ビジュアライザーのスロット（いくつでも）。レイヤーの id は 'st' + スロットの id
   slots: [{ id: 1, stStyle: 'none' }],
+  // 追加エフェクト（パック）の使用中インスタンス。レイヤーの id は 'fx' + id
+  fx: [],
   // 下から順に描く。beat: ビートで揺れ・ズームパンチするか
   layers: [
     { id: 'bg', beat: true }, { id: 'particles', beat: true }, { id: 'viz', beat: false }, { id: 'st1', beat: false },
@@ -468,6 +491,7 @@ BASE.slots = [{ ...SLOT_DEFAULT, id: 1, stStyle: 'none' }];
 let stSlot = 0; // 編集中のスロット（S.slots の番号）
 const curSlot = () => S.slots[Math.min(stSlot, S.slots.length - 1)];
 const isStudioLayer = id => /^st\d+$/.test(id);
+const isFxLayer = id => /^fx\d+$/.test(id);
 const slotOfLayer = id => S.slots.find(sl => 'st' + sl.id === id);
 const STYLE_NAMES = { none: 'なし', halo: 'HALO', aurora: 'AURORA', stardust: 'STARDUST', matrix: 'MATRIX', prism: 'PRISM' };
 const LAYER_NAMES = { bg: '背景', particles: 'パーティクル', viz: 'ビジュアライザー', video: '重ねる動画', image: '中央の画像',
@@ -516,6 +540,10 @@ const TEMPLATES = {
 };
 const S = { ...BASE };
 function layerName(id) {
+  if (isFxLayer(id)) {
+    const inst = S.fx.find(f => 'fx' + f.id === id), d = inst && FX.get(inst.type);
+    return '✨ ' + (d ? d.name : '（パック未読み込み）');
+  }
   if (!isStudioLayer(id)) return LAYER_NAMES[id];
   const i = S.slots.findIndex(sl => 'st' + sl.id === id);
   return 'Studio ' + (i + 1) + '：' + (STYLE_NAMES[S.slots[i] && S.slots[i].stStyle] || '');
@@ -550,8 +578,9 @@ function loadMyTemplates() { try { return JSON.parse(localStorage.getItem(LS_KEY
 function saveMyTemplates(t) { try { localStorage.setItem(LS_KEY, JSON.stringify(t)); return true; } catch { return false; } }
 
 // 古い保存データなどで欠けたレイヤーがあれば補う
-function normalizeLayers(list, slots) {
-  const ok = id => LAYER_NAMES[id] || (isStudioLayer(id) && slots.some(sl => 'st' + sl.id === id));
+function normalizeLayers(list, slots, fx = []) {
+  const ok = id => LAYER_NAMES[id] || (isStudioLayer(id) && slots.some(sl => 'st' + sl.id === id)) ||
+                   (isFxLayer(id) && fx.some(f => 'fx' + f.id === id));
   const out = (list || []).filter(l => ok(l.id)).filter((l, i, a) => a.findIndex(o => o.id === l.id) === i)
     .map(l => ({ x: 0, y: 0, sc: 1, rot: 0, ...l }));
   BASE.layers.forEach((l, i) => {
@@ -562,14 +591,25 @@ function normalizeLayers(list, slots) {
     const at = out.findIndex(o => o.id === 'viz') + 1;
     out.splice(at, 0, { id: 'st' + sl.id, beat: false, x: 0, y: 0, sc: 1, rot: 0 });
   }
+  for (const f of fx) if (!out.some(o => o.id === 'fx' + f.id)) out.splice(fxDefaultPos(out, f.type), 0, { id: 'fx' + f.id, beat: false, x: 0, y: 0, sc: 1, rot: 0 });
   return out;
+}
+// 追加エフェクトを最初に置く位置（種類ごと）
+function fxDefaultPos(layers, type) {
+  const d = FX.get(type), cat = d ? d.category : 'finish';
+  const after = id => layers.findIndex(o => o.id === id) + 1;
+  if (cat === 'bg') return after('bg');
+  if (cat === 'viz') return after('viz');
+  if (cat === 'frame' || cat === 'beat') return after('image');
+  return after('overlay'); // 仕上げ・文字
 }
 
 function applySettings(obj) {
   Object.assign(S, BASE, obj);
   const st = migrateStudio(obj);
   S.slots = st.slots;
-  S.layers = normalizeLayers(st.layers, S.slots);
+  S.fx = (Array.isArray(obj.fx) ? obj.fx : []).map(f => ({ id: f.id, type: f.type, params: { ...(f.params || {}) } }));
+  S.layers = normalizeLayers(st.layers, S.slots, S.fx);
   for (const k of Object.keys(S)) if (/^st[A-Z]/.test(k)) delete S[k]; // 以前の形式の項目は残さない
   stSlot = 0;
   // 以前の保存データ（重ねる動画だけに配置があった頃）からの引き継ぎ
@@ -583,7 +623,10 @@ function applySettings(obj) {
   document.documentElement.style.setProperty('--accent', S.accent);
   particles = [];
   resetRuntimes();
+  fxRuntime.clear();
+  fxSel = 0;
   syncStudioUI();
+  buildFxUI();
 }
 
 // Studio 欄の表示を、選択中のスロットの設定に合わせる
@@ -1423,10 +1466,181 @@ function sanitizeSettings(v) {
     .map(x => ({ ...slotClean(x), id: Math.max(1, Math.floor(+x.id) || 1) }));
   else for (const sfx of ['', '2', '3', '4']) for (const k of STUDIO_KEYS)  // 以前の形式
     if (typeof v[k + sfx] === typeof SLOT_DEFAULT[k]) clean[k + sfx] = v[k + sfx];
-  if (Array.isArray(v.layers)) clean.layers = v.layers.filter(l => l && (LAYER_NAMES[l.id] || isStudioLayer(l.id) || /^studio\d?$/.test(l.id))).map(l => ({
+  if (Array.isArray(v.fx)) clean.fx = v.fx.slice(0, 64).filter(f => f && typeof f === 'object' && typeof f.type === 'string' && /^[a-z0-9-]+\/[a-z0-9-]+$/.test(f.type))
+    .map(f => {
+      const params = {};
+      if (f.params && typeof f.params === 'object') for (const [k, x] of Object.entries(f.params).slice(0, 40))
+        if (/^[A-Za-z0-9_]{1,32}$/.test(k) && (typeof x === 'number' && isFinite(x) || typeof x === 'boolean' || typeof x === 'string' && x.length <= 64)) params[k] = x;
+      return { id: Math.max(1, Math.floor(+f.id) || 1), type: f.type, params };
+    }).filter((f, i, a) => a.findIndex(o => o.id === f.id) === i);
+  if (Array.isArray(v.layers)) clean.layers = v.layers.filter(l => l && (LAYER_NAMES[l.id] || isStudioLayer(l.id) || isFxLayer(l.id) || /^studio\d?$/.test(l.id))).map(l => ({
     id: l.id, beat: !!l.beat, x: +l.x || 0, y: +l.y || 0, sc: +l.sc || 1, rot: +l.rot || 0 }));
   return clean;
 }
+
+// ---------- 追加エフェクト（エフェクトパック） ----------
+// パック（.cpfx）は CoverPulse.definePack({...}) を呼ぶだけの JavaScript。読み込むとエフェクトが FX に登録される。
+// エフェクトの種類: kind 'draw'（絵を描く）/ 'adjust'（そのレイヤーより下の画面を加工する）
+const FX = new Map(), PACKS = new Map(), fxRuntime = new Map();
+let fxSel = 0;
+const FX_CATS = { bg: '背景', viz: 'ビジュアライザー', frame: '縁取り', beat: 'ビート演出', finish: '仕上げ・文字' };
+function registerPack(pack, code) {
+  if (!pack || typeof pack !== 'object' || !/^[a-z0-9-]{1,40}$/.test(pack.id || '') || !Array.isArray(pack.effects))
+    throw new Error('エフェクトパックの形式が正しくありません');
+  // 同じパックを読み直す時は、前のエフェクトを外してから登録する
+  for (const [k, d] of FX) if (d.pack === pack.id) FX.delete(k);
+  for (const e of pack.effects) {
+    if (!e || !/^[a-z0-9-]{1,40}$/.test(e.id || '') || !FX_CATS[e.category]) continue;
+    if (e.kind === 'adjust' ? typeof e.apply !== 'function' : typeof e.draw !== 'function') continue;
+    const params = (Array.isArray(e.params) ? e.params : []).filter(q => q && /^[A-Za-z0-9_]{1,32}$/.test(q.key || ''));
+    FX.set(pack.id + '/' + e.id, { ...e, kind: e.kind === 'adjust' ? 'adjust' : 'draw', params, pack: pack.id, name: String(e.name || e.id).slice(0, 40) });
+  }
+  PACKS.set(pack.id, { id: pack.id, name: String(pack.name || pack.id).slice(0, 60), version: String(pack.version || '').slice(0, 20), code });
+}
+function runPackCode(code) {
+  let defined = null;
+  const api = Object.freeze({ apiVersion: 1, definePack: pk => { registerPack(pk, code); defined = pk.id; } });
+  new Function('CoverPulse', code)(api);
+  if (!defined) throw new Error('エフェクトパックではありません');
+  return defined;
+}
+// 読み込んだパックは別のデータベースに保存して、次回から自動で使えるようにする（「新しく始める」でも消えない）
+const packDB = (() => {
+  let dbp = null;
+  const open = () => dbp || (dbp = new Promise((res, rej) => {
+    const r = indexedDB.open('coverpulse-packs', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('packs');
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  }));
+  const run = (mode, fn) => open().then(db => new Promise((res, rej) => {
+    const tx = db.transaction('packs', mode), st = tx.objectStore('packs'), q = fn(st);
+    tx.oncomplete = () => res(q && q.result); tx.onerror = () => rej(tx.error);
+  }));
+  return { all: () => run('readonly', st => st.getAll()), put: (k, v) => run('readwrite', st => st.put(v, k)), del: k => run('readwrite', st => st.delete(k)) };
+})();
+async function loadStoredPacks() {
+  try { for (const rec of await packDB.all() || []) { try { runPackCode(rec.code); } catch (e) { console.warn('パックを読み込めませんでした', e); } } }
+  catch (e) { /* 保存領域が使えない環境 */ }
+  buildFxUI(); buildLayerUI();
+}
+$('fxLoad').onclick = () => $('fxFile').click();
+$('fxFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  try {
+    const code = await f.text();
+    if (code.length > 2 * 1048576) throw new Error('ファイルが大きすぎます');
+    const id = runPackCode(code);
+    try { await packDB.put(id, { code }); } catch (err) {}
+    buildFxUI(); buildLayerUI();
+    const pk = PACKS.get(id);
+    setStatus(`エフェクトパック「${pk.name}」を読み込みました。「＋ 追加」から使えます`);
+  } catch (err) { setStatus('エフェクトパックを読み込めませんでした: ' + err.message); }
+};
+function fxDefaults(d) { const o = {}; for (const q of d.params) o[q.key] = q.default; return o; }
+function buildFxUI() {
+  const has = PACKS.size > 0;
+  $('fxNoPack').hidden = has; $('fxEditor').hidden = !has;
+  $('fxPacks').innerHTML = [...PACKS.values()].map(pk =>
+    `読み込み済み: <b>${esc(pk.name)}</b> ${esc(pk.version)} <a href="#" data-unpack="${esc(pk.id)}" style="color:var(--muted)">外す</a>`).join('<br>');
+  for (const a of $('fxPacks').querySelectorAll('[data-unpack]')) a.onclick = async ev => {
+    ev.preventDefault();
+    const id = a.dataset.unpack;
+    if (!confirm('このエフェクトパックを外しますか？（使っているエフェクトは表示されなくなります）')) return;
+    for (const [k, d] of FX) if (d.pack === id) FX.delete(k);
+    PACKS.delete(id);
+    try { await packDB.del(id); } catch (err) {}
+    buildFxUI(); buildLayerUI();
+  };
+  const sel = $('fxAddSel');
+  sel.innerHTML = '';
+  for (const [cat, label] of Object.entries(FX_CATS)) {
+    const items = [...FX.entries()].filter(([, d]) => d.category === cat);
+    if (!items.length) continue;
+    const og = document.createElement('optgroup'); og.label = label;
+    for (const [k, d] of items) og.appendChild(new Option(d.name, k));
+    sel.appendChild(og);
+  }
+  const list = $('fxList');
+  list.innerHTML = '';
+  fxSel = Math.min(fxSel, Math.max(0, S.fx.length - 1));
+  S.fx.forEach((f, i) => {
+    const d = FX.get(f.type), b = document.createElement('button');
+    b.textContent = (d ? d.name : '（未読み込み）');
+    b.classList.toggle('on', i === fxSel);
+    b.onclick = () => { fxSel = i; buildFxUI(); };
+    list.appendChild(b);
+  });
+  $('fxRemove').hidden = !S.fx.length;
+  buildFxParams();
+}
+function buildFxParams() {
+  const box = $('fxParams');
+  box.innerHTML = '';
+  const inst = S.fx[fxSel], d = inst && FX.get(inst.type);
+  if (!d) return;
+  const p = { ...fxDefaults(d), ...inst.params };
+  for (const q of d.params) {
+    const lab = document.createElement('label');
+    let el;
+    if (q.type === 'select') {
+      el = document.createElement('select');
+      for (const [v, t] of q.options || []) el.add(new Option(t, v));
+      el.value = p[q.key];
+    } else if (q.type === 'check') {
+      lab.className = 'check';
+      el = Object.assign(document.createElement('input'), { type: 'checkbox', checked: !!p[q.key] });
+    } else if (q.type === 'color') {
+      el = Object.assign(document.createElement('input'), { type: 'color', value: p[q.key] });
+    } else {
+      el = Object.assign(document.createElement('input'), { type: 'range', min: q.min, max: q.max, step: q.step || 0.01, value: p[q.key] });
+    }
+    el.addEventListener('input', () => {
+      inst.params[q.key] = q.type === 'check' ? el.checked : q.type === 'range' || q.type === undefined ? +el.value : el.value;
+      markTpl(null);
+    });
+    if (q.type === 'check') { lab.append(el, ' ' + q.label); } else { lab.append(q.label, el); }
+    box.appendChild(lab);
+  }
+}
+$('fxAdd').onclick = () => {
+  const type = $('fxAddSel').value, d = FX.get(type);
+  if (!d) return;
+  const id = Math.max(0, ...S.fx.map(f => f.id)) + 1;
+  S.fx.push({ id, type, params: fxDefaults(d) });
+  S.layers.splice(fxDefaultPos(S.layers, type), 0, { id: 'fx' + id, beat: false, x: 0, y: 0, sc: 1, rot: 0 });
+  fxSel = S.fx.length - 1;
+  markTpl(null); buildFxUI(); buildLayerUI();
+};
+$('fxRemove').onclick = () => {
+  const inst = S.fx[fxSel];
+  if (!inst) return;
+  S.fx.splice(fxSel, 1);
+  S.layers = S.layers.filter(l => l.id !== 'fx' + inst.id);
+  fxRuntime.delete(inst.id);
+  if (selLayer === 'fx' + inst.id) selLayer = 'image';
+  markTpl(null); buildFxUI(); buildLayerUI(); updateXformUI();
+};
+
+// エフェクトに渡す「今のコマの情報」と、作業用キャンバス
+const fxScratch = [];
+function scratchCanvas(i) {
+  return fxScratch[i] || (fxScratch[i] = Object.assign(document.createElement('canvas'), { width: W, height: H }));
+}
+function makeFxEnv(t, dt, box, ct, dur) {
+  const IL = layerById('image') || { x: 0, y: 0, sc: 1, rot: 0 };
+  return {
+    W, H, CX, CY, t, dt, playing, time: ct, duration: dur,
+    beat: flash, pulse, bass, bands: barVals, wave, accent: S.accent, hue: hexToHue(S.accent), img,
+    image: { cx: CX + IL.x, cy: box.cy + IL.y, w: box.w * IL.sc, h: box.h * IL.sc,
+             rot: box.rot + IL.rot * Math.PI / 180, shape: S.imgShape },
+    title: $('title').value, artist: $('artist').value,
+    scratch: i => scratchCanvas(i + 1),
+    // 今の画面（このレイヤーより下を描いた状態）のコピー
+    snapshot() { const c = scratchCanvas(0), x = c.getContext('2d'); x.globalCompositeOperation = 'copy'; x.drawImage(cv, 0, 0); x.globalCompositeOperation = 'source-over'; return c; },
+  };
+}
+function fxState(inst) { let r = fxRuntime.get(inst.id); if (!r) fxRuntime.set(inst.id, r = {}); return r; }
 
 // ---------- 作業内容の保存 ----------
 // 曲名や書き出し設定も含めた「今の状態」
@@ -2626,6 +2840,13 @@ function layerPivot(id, box, ct, dur) {
   return [CX, CY];
 }
 
+// エフェクトのエラーは同じものを何度も出さない
+const fxErrors = new Set();
+function reportFxError(d, e) {
+  const key = d.pack + '/' + d.id + ':' + e.message;
+  if (!fxErrors.has(key)) { fxErrors.add(key); console.error('エフェクトのエラー', d.name, e); setStatus('エフェクト「' + d.name + '」でエラーが出ました: ' + e.message); }
+}
+
 let last = performance.now();
 function render(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
@@ -2642,7 +2863,20 @@ function render(now) {
   const dur = audioBuf ? audioBuf.duration : 0, ct = Math.min(curTime(), dur);
   const videoVisible = syncVideo();
 
+  let fxEnv = null;
   for (const L of S.layers) {
+    // 加工タイプの追加エフェクトは、それまでに描いた画面全体に効かせる（揺れ・配置は使わない）
+    if (isFxLayer(L.id)) {
+      const inst = S.fx.find(f => 'fx' + f.id === L.id), d = inst && FX.get(inst.type);
+      if (!d) continue;
+      fxEnv = fxEnv || makeFxEnv(t, dt, box, ct, dur);
+      if (d.kind === 'adjust') {
+        g.save();
+        try { d.apply(g, fxEnv, { ...fxDefaults(d), ...inst.params }, fxState(inst)); } catch (e) { reportFxError(d, e); }
+        g.restore();
+        continue;
+      }
+    }
     if (L.id === 'flash') {
       const fl = flash * S.flash * 0.35;
       if (fl > 0.01) { g.fillStyle = 'rgba(255,255,255,' + fl + ')'; g.fillRect(0, 0, W, H); }
@@ -2663,14 +2897,18 @@ function render(now) {
       case 'text': drawText(box); break;
       case 'overlay': drawOverlay(); break;
       case 'video': drawVideo(videoVisible, L); break;
+      case 'progress': drawBar(ct, dur); break;
+      case 'counter': drawCounter(ct, dur); break;
       default:
         if (isStudioLayer(L.id)) {
           const sl = slotOfLayer(L.id);
           if (sl && renderStudio(dt, box, sl))
             drawPlaced(slotRuntime(sl).canvas, W, H, 1, L, { opacity: sl.stOpacity, blend: 'source-over', fh: sl.stFlipH, fv: sl.stFlipV, mirror: sl.stMirror });
+        } else if (isFxLayer(L.id)) {
+          const inst = S.fx.find(f => 'fx' + f.id === L.id), d = FX.get(inst.type);
+          try { d.draw(g, fxEnv, { ...fxDefaults(d), ...inst.params }, fxState(inst)); } catch (e) { reportFxError(d, e); }
         }
-      case 'progress': drawBar(ct, dur); break;
-      case 'counter': drawCounter(ct, dur); break;
+        break;
     }
     g.restore();
   }
@@ -2695,7 +2933,7 @@ function loop(now) {
 buildTemplateUI();
 applySettings(TEMPLATES['EDM サークル']);
 markTpl($('tpls').children[0]);
-restoreSession();
+loadStoredPacks().then(restoreSession);
 requestAnimationFrame(loop);
 </script>
 </body>
