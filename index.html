@@ -29,6 +29,9 @@
   .banner[hidden] { display: none; }
   footer { color: var(--muted); font-size: 11px; line-height: 1.7; border-top: 1px solid var(--line); padding-top: 10px; }
   footer a { color: var(--muted); }
+  .support { display: block; text-align: center; padding: 9px; border-radius: 6px; border: 1px solid #5a2a44; background: #24131c;
+             color: #ff8cc0; font-size: 12px; text-decoration: none; }
+  .support:hover { border-color: #ff5fa8; }
   dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; max-width: 560px; line-height: 1.7; font-size: 13px; }
   dialog::backdrop { background: rgba(0, 0, 0, .6); }
   dialog h2 { font-size: 15px; margin: 0 0 8px; }
@@ -410,8 +413,11 @@
     </div>
     <button id="installBtn" hidden>📥 アプリとしてインストール</button>
     <div id="updateBanner" class="banner" hidden>新しいバージョンがあります。 <button id="updateBtn" class="small">再読み込みして更新</button></div>
+    <a class="support" href="https://soundartz.booth.pm/items/8989663" target="_blank" rel="noopener">💖 気に入ったら BOOTH で応援する</a>
     <footer>
-      CoverPulse v1.2 ・ <a href="#" id="termsLink">利用規約・プライバシー</a><br>
+      CoverPulse v1.2.1 ・ <a href="#" id="termsLink">利用規約・プライバシー</a><br>
+      作者: <a href="https://soundartzix-netizen.github.io/" target="_blank" rel="noopener">Sound Artz</a> ・
+      <a href="https://soundartz.booth.pm" target="_blank" rel="noopener">BOOTH</a><br>
       画像・曲・動画はすべてこのブラウザの中で処理され、外部には送信されません。<br>
       推奨: PC版 Chrome / Edge（最新版）
     </footer>

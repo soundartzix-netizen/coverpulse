@@ -33,6 +33,15 @@ Chrome / Edge で開くと、アドレスバー右側のアイコンか、右側
 - PC版 Chrome / Edge（最新版）推奨
 - スマホ・タブレットは非推奨
 
+## 応援・ダウンロード版
+
+CoverPulse は無料で使えます。気に入ったら BOOTH で応援していただけるとうれしいです。
+HTML ファイル版（オフラインで手元に置いておけるもの）も BOOTH で配布しています。
+
+**▶ BOOTH: https://soundartz.booth.pm/items/8989663**
+
+作者: [Sound Artz](https://soundartzix-netizen.github.io/)
+
 ## 作った動画について
 
 CoverPulse で作った動画は、個人・商用を問わず自由に使えます（YouTube・SNS への投稿、収益化を含む）。
