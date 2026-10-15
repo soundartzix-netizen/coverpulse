@@ -69,6 +69,13 @@
   .layer .arrows button { padding: 2px 6px; font-size: 11px; }
   .layer.sel { border-color: var(--accent); background: #13202a; }
   .xform { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
+  .fxSlot { display: flex; flex-direction: column; gap: 8px; border-top: 1px dashed var(--line); padding-top: 10px; margin-top: 2px; }
+  .fxSlot[hidden] { display: none; }
+  .fxSlot .fxHead { font-size: 12px; color: var(--accent); font-weight: bold; }
+  .fxSlot .row button { white-space: nowrap; }
+  .fxSlot .fxParams { display: flex; flex-direction: column; gap: 10px; }
+  .fxMore { font-size: 11px; color: var(--muted); text-decoration: none; }
+  .fxMore:hover { color: var(--accent); }
   .chip { font-size: 11px; padding: 3px 8px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; }
   .chip.on { border-color: var(--accent); color: var(--accent); }
   .val { min-width: 3.5em; text-align: right; }
@@ -143,6 +150,7 @@
         </label>
         <label class="check"><input type="checkbox" data-k="bgPulse"> 低音で背景が膨らむ</label>
         <label>アクセント色<input type="color" data-k="accent"></label>
+        <div class="fxSlot" data-cat="bg" hidden></div>
       </div>
     </details>
 
@@ -169,6 +177,7 @@
         </div>
         <label>大きさ <input type="range" data-k="imgSize" min="200" max="900" step="10"></label>
         <label class="check"><input type="checkbox" data-k="imgBorder"> 縁取り（アクセント色）</label>
+        <div class="fxSlot" data-cat="frame" hidden></div>
       </div>
     </details>
 
@@ -202,6 +211,7 @@
           <label>色2（外側）<input type="color" data-k="vizC2"></label>
         </div>
         <label>感度 <input type="range" data-k="sens" min="0.3" max="2.5" step="0.05"></label>
+        <div class="fxSlot" data-cat="viz" hidden></div>
       </div>
     </details>
 
@@ -255,23 +265,15 @@
       </div>
     </details>
 
-    <details id="fxSection" open>
-      <summary>追加エフェクト</summary>
+    <details id="fxSection">
+      <summary>エフェクトパック</summary>
       <div>
         <div id="fxNoPack" class="note">縁取り・グリッチ・万華鏡などの追加エフェクトパックを
-          <a href="https://soundartz.booth.pm/items/8989662" target="_blank" rel="noopener" style="color:var(--accent)">BOOTH</a> で配布しています。</div>
+          <a href="https://soundartz.booth.pm" target="_blank" rel="noopener" style="color:var(--accent)">BOOTH</a> で配布しています。</div>
         <button id="fxLoad" class="small">📦 エフェクトパックを読み込む（.cpfx）</button>
         <input id="fxFile" type="file" accept=".cpfx" hidden>
         <div id="fxPacks" class="note"></div>
-        <div id="fxEditor" hidden>
-          <div class="row">
-            <select id="fxAddSel"></select>
-            <button id="fxAdd" class="small" style="flex:0">＋ 追加</button>
-          </div>
-          <div id="fxList" class="tpls" style="grid-template-columns: 1fr 1fr"></div>
-          <div id="fxParams" style="display:flex; flex-direction:column; gap:10px; margin-top:10px"></div>
-          <button id="fxRemove" class="small" style="margin-top:10px">このエフェクトを削除</button>
-        </div>
+        <div class="note">読み込んだエフェクトは、背景・ビジュアライザー・中央の画像・ビート演出・仕上げの各欄にある「✨ パックの〜」から使えます。</div>
         <div class="note">エフェクトパックはプログラムです。作者（Sound Artz）が配布したものだけを読み込んでください。</div>
       </div>
     </details>
@@ -305,6 +307,7 @@
         <label>画面の揺れ <input type="range" data-k="shake" min="0" max="2" step="0.05"></label>
         <label>フラッシュ <input type="range" data-k="flash" min="0" max="1" step="0.05"></label>
         <label>ズームパンチ（画面全体が跳ねる） <input type="range" data-k="punch" min="0" max="2" step="0.05"></label>
+        <div class="fxSlot" data-cat="beat" hidden></div>
       </div>
     </details>
 
@@ -359,6 +362,7 @@
             </select>
           </label>
         </div>
+        <div class="fxSlot" data-cat="finish" hidden></div>
       </div>
     </details>
 
@@ -454,7 +458,7 @@
     <div id="updateBanner" class="banner" hidden>新しいバージョンがあります。 <button id="updateBtn" class="small">再読み込みして更新</button></div>
     <a class="support" href="https://soundartz.booth.pm/items/8989663" target="_blank" rel="noopener">💖 気に入ったら BOOTH で応援する</a>
     <footer>
-      CoverPulse v1.4 ・ <a href="#" id="termsLink">利用規約・プライバシー</a><br>
+      CoverPulse v1.5 ・ <a href="#" id="termsLink">利用規約・プライバシー</a><br>
       作者: <a href="https://soundartzix-netizen.github.io/" target="_blank" rel="noopener">Sound Artz</a> ・
       <a href="https://soundartz.booth.pm" target="_blank" rel="noopener">BOOTH</a><br>
       画像・曲・動画はすべてこのブラウザの中で処理され、外部には送信されません。<br>
@@ -651,7 +655,7 @@ function applySettings(obj) {
   particles = [];
   resetRuntimes();
   fxRuntime.clear();
-  fxSel = 0;
+  fxSelByCat = {};
   syncStudioUI();
   buildFxUI();
 }
@@ -1510,7 +1514,24 @@ function sanitizeSettings(v) {
 // パック（.cpfx）は CoverPulse.definePack({...}) を呼ぶだけの JavaScript。読み込むとエフェクトが FX に登録される。
 // エフェクトの種類: kind 'draw'（絵を描く）/ 'adjust'（そのレイヤーより下の画面を加工する）
 const FX = new Map(), PACKS = new Map(), fxRuntime = new Map();
-let fxSel = 0;
+let fxSelByCat = {}; // 欄ごとに選んでいるエフェクト（インスタンスの id）
+// パックの目録。名前と分類だけで、エフェクトの中身は入っていない
+// url があるもの（販売中）だけ、持っていない人に案内する。url が無いものは分類を知るためだけに使う
+const FX_CATALOG = [
+  { pack: 'sa-fx-vol1', url: 'https://soundartz.booth.pm/items/8989662',
+    effects: [['bg', 'kaleidoscope'], ['frame', 'light-trace'], ['beat', 'rgb-split'], ['beat', 'glitch']] },
+  { pack: 'sa-fx-vol2', url: null,
+    effects: [['viz', 'laser'], ['beat', 'color-strobe'], ['beat', 'zoom-blur'], ['viz', 'mirror-bars'], ['bg', 'synthwave']] },
+];
+const SHOP_URL = 'https://soundartz.booth.pm';
+// エフェクトの分類（パックが読み込まれていなくても、目録から分かる範囲で）
+function fxCatOf(type) {
+  const d = FX.get(type);
+  if (d) return d.category;
+  const [pk, id] = type.split('/');
+  const c = FX_CATALOG.find(c => c.pack === pk), e = c && c.effects.find(e => e[1] === id);
+  return e ? e[0] : 'finish';
+}
 const FX_CATS = { bg: '背景', viz: 'ビジュアライザー', frame: '縁取り', beat: 'ビート演出', finish: '仕上げ・文字' };
 function registerPack(pack, code) {
   if (!pack || typeof pack !== 'object' || !/^[a-z0-9-]{1,40}$/.test(pack.id || '') || !Array.isArray(pack.effects))
@@ -1562,13 +1583,12 @@ $('fxFile').onchange = async e => {
     try { await packDB.put(id, { code }); } catch (err) {}
     buildFxUI(); buildLayerUI();
     const pk = PACKS.get(id);
-    setStatus(`エフェクトパック「${pk.name}」を読み込みました。「＋ 追加」から使えます`);
+    setStatus(`エフェクトパック「${pk.name}」を読み込みました。背景・ビジュアライザーなど各欄の「✨ パックの〜」から使えます`);
   } catch (err) { setStatus('エフェクトパックを読み込めませんでした: ' + err.message); }
 };
 function fxDefaults(d) { const o = {}; for (const q of d.params) o[q.key] = q.default; return o; }
 function buildFxUI() {
-  const has = PACKS.size > 0;
-  $('fxNoPack').hidden = has; $('fxEditor').hidden = !has;
+  $('fxNoPack').hidden = PACKS.size > 0;
   $('fxPacks').innerHTML = [...PACKS.values()].map(pk =>
     `読み込み済み: <b>${esc(pk.name)}</b> ${esc(pk.version)} <a href="#" data-unpack="${esc(pk.id)}" style="color:var(--muted)">外す</a>`).join('<br>');
   for (const a of $('fxPacks').querySelectorAll('[data-unpack]')) a.onclick = async ev => {
@@ -1580,32 +1600,61 @@ function buildFxUI() {
     try { await packDB.del(id); } catch (err) {}
     buildFxUI(); buildLayerUI();
   };
-  const sel = $('fxAddSel');
-  sel.innerHTML = '';
-  for (const [cat, label] of Object.entries(FX_CATS)) {
-    const items = [...FX.entries()].filter(([, d]) => d.category === cat);
-    if (!items.length) continue;
-    const og = document.createElement('optgroup'); og.label = label;
-    for (const [k, d] of items) og.appendChild(new Option(d.name, k));
-    sel.appendChild(og);
-  }
-  const list = $('fxList');
-  list.innerHTML = '';
-  fxSel = Math.min(fxSel, Math.max(0, S.fx.length - 1));
-  S.fx.forEach((f, i) => {
-    const d = FX.get(f.type), b = document.createElement('button');
-    b.textContent = (d ? d.name : '（未読み込み）');
-    b.classList.toggle('on', i === fxSel);
-    b.onclick = () => { fxSel = i; buildFxUI(); };
-    list.appendChild(b);
-  });
-  $('fxRemove').hidden = !S.fx.length;
-  buildFxParams();
+  for (const box of document.querySelectorAll('.fxSlot')) buildFxSlot(box, box.dataset.cat);
 }
-function buildFxParams() {
-  const box = $('fxParams');
+
+// 1つの欄（背景・ビジュアライザーなど）の中の「パックのエフェクト」
+function buildFxSlot(box, cat) {
   box.innerHTML = '';
-  const inst = S.fx[fxSel], d = inst && FX.get(inst.type);
+  const label = FX_CATS[cat];
+  const avail = [...FX.entries()].filter(([, d]) => d.category === cat);
+  const insts = S.fx.filter(f => fxCatOf(f.type) === cat);
+  if (avail.length || insts.length) {
+    box.appendChild(Object.assign(document.createElement('div'), { className: 'fxHead', textContent: '✨ パックの' + label }));
+    if (avail.length) {
+      const row = Object.assign(document.createElement('div'), { className: 'row' });
+      const sel = document.createElement('select');
+      for (const [k, d] of avail) sel.add(new Option(d.name, k));
+      const add = Object.assign(document.createElement('button'), { className: 'small', textContent: '＋ 追加' });
+      add.style.flex = '0';
+      add.onclick = () => addFx(sel.value);
+      row.append(sel, add);
+      box.appendChild(row);
+    }
+    if (insts.length) {
+      if (!insts.some(f => f.id === fxSelByCat[cat])) fxSelByCat[cat] = insts[0].id;
+      const list = Object.assign(document.createElement('div'), { className: 'tpls' });
+      list.style.gridTemplateColumns = '1fr 1fr';
+      for (const f of insts) {
+        const d = FX.get(f.type), b = document.createElement('button');
+        b.textContent = d ? d.name : '（パック未読み込み）';
+        b.classList.toggle('on', f.id === fxSelByCat[cat]);
+        b.onclick = () => { fxSelByCat[cat] = f.id; buildFxSlot(box, cat); };
+        list.appendChild(b);
+      }
+      box.appendChild(list);
+      const inst = insts.find(f => f.id === fxSelByCat[cat]);
+      const params = Object.assign(document.createElement('div'), { className: 'fxParams' });
+      buildFxParams(params, inst);
+      box.appendChild(params);
+      const rm = Object.assign(document.createElement('button'), { className: 'small', textContent: 'このエフェクトを削除' });
+      rm.onclick = () => removeFx(inst.id);
+      box.appendChild(rm);
+    }
+  }
+  // まだ持っていないパックのエフェクトがあれば、1行だけ案内する
+  const missing = FX_CATALOG.filter(c => c.url && !PACKS.has(c.pack)).map(c => ({ c, n: c.effects.filter(e => e[0] === cat).length })).filter(x => x.n);
+  const n = missing.reduce((a, x) => a + x.n, 0);
+  if (n) {
+    const url = missing.length === 1 ? missing[0].c.url : SHOP_URL;
+    box.appendChild(Object.assign(document.createElement('a'), { className: 'fxMore', href: url, target: '_blank', rel: 'noopener',
+      textContent: `エフェクトパックで${label}を${n}種類追加できます →` }));
+  }
+  box.hidden = !box.childElementCount;
+}
+
+function buildFxParams(box, inst) {
+  const d = inst && FX.get(inst.type);
   if (!d) return;
   const p = { ...fxDefaults(d), ...inst.params };
   for (const q of d.params) {
@@ -1631,24 +1680,24 @@ function buildFxParams() {
     box.appendChild(lab);
   }
 }
-$('fxAdd').onclick = () => {
-  const type = $('fxAddSel').value, d = FX.get(type);
+function addFx(type) {
+  const d = FX.get(type);
   if (!d) return;
   const id = Math.max(0, ...S.fx.map(f => f.id)) + 1;
   S.fx.push({ id, type, params: fxDefaults(d) });
   S.layers.splice(fxDefaultPos(S.layers, type), 0, { id: 'fx' + id, beat: false, x: 0, y: 0, sc: 1, rot: 0 });
-  fxSel = S.fx.length - 1;
+  fxSelByCat[d.category] = id;
   markTpl(null); buildFxUI(); buildLayerUI();
-};
-$('fxRemove').onclick = () => {
-  const inst = S.fx[fxSel];
-  if (!inst) return;
-  S.fx.splice(fxSel, 1);
-  S.layers = S.layers.filter(l => l.id !== 'fx' + inst.id);
-  fxRuntime.delete(inst.id);
-  if (selLayer === 'fx' + inst.id) selLayer = 'image';
+}
+function removeFx(id) {
+  const i = S.fx.findIndex(f => f.id === id);
+  if (i < 0) return;
+  S.fx.splice(i, 1);
+  S.layers = S.layers.filter(l => l.id !== 'fx' + id);
+  fxRuntime.delete(id);
+  if (selLayer === 'fx' + id) selLayer = 'image';
   markTpl(null); buildFxUI(); buildLayerUI(); updateXformUI();
-};
+}
 
 // エフェクトに渡す「今のコマの情報」と、作業用キャンバス
 const fxScratch = [];
