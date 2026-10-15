@@ -184,6 +184,23 @@
             <option value="none">なし</option>
           </select>
         </label>
+        <label>配色
+          <select data-k="vizColor">
+            <option value="accent">アクセント色（1色）</option>
+            <option value="neon">ネオン（ピンク→紫→水色）</option>
+            <option value="rainbow">虹色（ゆっくり回る）</option>
+            <option value="sunset">サンセット（黄→オレンジ→ピンク→紫）</option>
+            <option value="ice">アイス（白→水色→青）</option>
+            <option value="gold">ゴールド（クリーム→金→オレンジ）</option>
+            <option value="fire">ファイア（黄→赤）</option>
+            <option value="mint">ミント（薄緑→エメラルド→青）</option>
+            <option value="custom">自分で選ぶ（2色）</option>
+          </select>
+        </label>
+        <div id="vizCustom" class="row" hidden>
+          <label>色1（中心側）<input type="color" data-k="vizC1"></label>
+          <label>色2（外側）<input type="color" data-k="vizC2"></label>
+        </div>
         <label>感度 <input type="range" data-k="sens" min="0.3" max="2.5" step="0.05"></label>
       </div>
     </details>
@@ -437,7 +454,7 @@
     <div id="updateBanner" class="banner" hidden>新しいバージョンがあります。 <button id="updateBtn" class="small">再読み込みして更新</button></div>
     <a class="support" href="https://soundartz.booth.pm/items/8989663" target="_blank" rel="noopener">💖 気に入ったら BOOTH で応援する</a>
     <footer>
-      CoverPulse v1.3 ・ <a href="#" id="termsLink">利用規約・プライバシー</a><br>
+      CoverPulse v1.4 ・ <a href="#" id="termsLink">利用規約・プライバシー</a><br>
       作者: <a href="https://soundartzix-netizen.github.io/" target="_blank" rel="noopener">Sound Artz</a> ・
       <a href="https://soundartz.booth.pm" target="_blank" rel="noopener">BOOTH</a><br>
       画像・曲・動画はすべてこのブラウザの中で処理され、外部には送信されません。<br>
@@ -477,6 +494,7 @@ const BASE = {
   particles: 'outward', partAmount: 160,
   beatBand: 'kick', beatSens: 1.0, shake: 1, flash: 0.35, punch: 0,
   overlay: 'none', textPos: 'bottomLeft', font: 'gothic', progressBar: true,
+  vizColor: 'accent', vizC1: '#ff2f8f', vizC2: '#29f1e0',
   barStyle: 'thin', barPos: 'bottom', counter: 'none',
   vidBlend: 'source-over', vidFit: 'cover', vidOpacity: 1, vidOffset: 0,
   vidFlipH: false, vidFlipV: false, vidMirror: 'none',
@@ -511,7 +529,7 @@ const TEMPLATES = {
   'ハード': { bg: 'darkImage', accent: '#ff3b3b', imgShape: 'square', imgSize: 500, viz: 'circleBars', sens: 1.3,
               partAmount: 320, shake: 1.8, flash: 0.5, punch: 1.2, overlay: 'film',
               layers: beatLayers(['bg', 'particles', 'viz', 'image']) },
-  'ネオン': { bg: 'gradient', bgPulse: true, accent: '#ff3df2', imgSize: 480, viz: 'circleWave', sens: 1.2,
+  'ネオン': { bg: 'gradient', bgPulse: true, accent: '#ff3df2', imgSize: 480, viz: 'circleWave', vizColor: 'neon', sens: 1.2,
               particles: 'bokeh', partAmount: 70, shake: 0.4, flash: 0.2, punch: 0.6, overlay: 'scanline',
               layers: beatLayers(['bg', 'particles', 'viz']) },
   'Lo-fi': { bg: 'blurStatic', bgPulse: false, accent: '#ffcf8a', imgShape: 'rounded', imgMotion: 'float', imgSize: 520,
@@ -629,6 +647,7 @@ function applySettings(obj) {
     if (el.type === 'checkbox') el.checked = !!S[el.dataset.k]; else el.value = S[el.dataset.k];
   }
   document.documentElement.style.setProperty('--accent', S.accent);
+  $('vizCustom').hidden = S.vizColor !== 'custom';
   particles = [];
   resetRuntimes();
   fxRuntime.clear();
@@ -778,6 +797,7 @@ for (const el of document.querySelectorAll('[data-k]')) {
     target[k] = el.type === 'checkbox' ? el.checked : (el.type === 'range' ? +el.value : el.value);
     if (k === 'accent') document.documentElement.style.setProperty('--accent', S.accent);
     if (k === 'particles') particles = [];
+    if (k === 'vizColor') $('vizCustom').hidden = S.vizColor !== 'custom';
     if (k === 'stStyle') { resetRuntime(stRuntime.get(curSlot().id)); syncStudioUI(); buildLayerUI(); }
     markTpl(null);
   });
@@ -2607,11 +2627,40 @@ function drawImage(box) {
   g.restore();
 }
 
+// ビジュアライザーの配色。p=0 が中心側（円形なら上・バーなら中央）、p=1 が外側
+const VIZ_PALETTES = {
+  neon: ['#ff2f8f', '#b84dff', '#29f1e0'], sunset: ['#ffd27a', '#ff7a45', '#ff2f8f', '#7a5cff'],
+  ice: ['#e6fbff', '#5ad1ff', '#3d5bff'], gold: ['#fff1c9', '#ffd27a', '#ff9f43'],
+  fire: ['#ffe066', '#ff6b1a', '#d6002f'], mint: ['#b8ffe0', '#36d6b5', '#2a8cff'],
+};
+const hexRgb = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+function vizColorAt(p, t) {
+  if (S.vizColor === 'rainbow') return `hsl(${(p * 300 + t * 40) % 360},100%,62%)`;
+  const stops = S.vizColor === 'custom' ? [S.vizC1, S.vizC2] : VIZ_PALETTES[S.vizColor] || [S.accent];
+  if (stops.length === 1) return stops[0];
+  const x = Math.min(1, Math.max(0, p)) * (stops.length - 1), i = Math.min(stops.length - 2, Math.floor(x)), f = x - i;
+  const a = hexRgb(stops[i]), b = hexRgb(stops[i + 1]);
+  return `rgb(${a.map((v, k) => Math.round(v + (b[k] - v) * f)).join(',')})`;
+}
+// 円の周りで上下・左右対称に色が変わるグラデーション（上=中心側の色、下=外側の色）
+function vizConic(cx, cy, t) {
+  const gr = g.createConicGradient(-Math.PI / 2, cx, cy);
+  for (let k = 0; k <= 24; k++) { const u = k / 24; gr.addColorStop(u, vizColorAt(u <= 0.5 ? u * 2 : (1 - u) * 2, t)); }
+  return gr;
+}
+// 横方向で、中央=中心側の色・両端=外側の色になるグラデーション
+function vizLinear(t) {
+  const gr = g.createLinearGradient(80, 0, W - 80, 0);
+  for (let k = 0; k <= 16; k++) { const u = k / 16; gr.addColorStop(u, vizColorAt(Math.abs(u - 0.5) * 2, t)); }
+  return gr;
+}
+
 function drawViz(box) {
-  const accent = S.accent;
+  const accent = S.accent, t = performance.now() / 1000, multi = S.vizColor !== 'accent';
   g.save();
-  g.strokeStyle = g.fillStyle = accent;
-  g.shadowColor = accent; g.shadowBlur = 25;
+  const paint = !multi ? accent : S.viz === 'circleBars' || S.viz === 'circleWave' ? vizConic(CX, box.cy, t) : vizLinear(t);
+  g.strokeStyle = g.fillStyle = paint;
+  g.shadowColor = multi ? vizColorAt(0.5, t) : accent; g.shadowBlur = 25;
   g.lineCap = 'round'; g.lineJoin = 'round';
   if (S.viz === 'circleBars') {
     const R = box.r + 14, step = Math.PI / barsHalf;
