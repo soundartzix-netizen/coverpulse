@@ -446,6 +446,7 @@
     </div>
     <div id="sizeNote" class="note"></div>
     <button id="exportBtn" class="primary" disabled>⏺ 動画を書き出す</button>
+    <label class="check" style="font-size:12px"><input type="checkbox" id="legacyExport"> 互換モードで書き出す（うまく書き出せない時に。画面録画方式・タブは表示したままに）</label>
     <button id="resaveBtn" hidden>💾 もう一度保存</button>
     <div class="note">
       <b>作った動画は YouTube などに自由に公開・収益化できます（クレジット・リンク・連絡は不要）。</b><br>
@@ -458,7 +459,7 @@
     <div id="updateBanner" class="banner" hidden>新しいバージョンがあります。 <button id="updateBtn" class="small">再読み込みして更新</button></div>
     <a class="support" href="https://soundartz.booth.pm/items/8989663" target="_blank" rel="noopener">💖 気に入ったら BOOTH で応援する</a>
     <footer>
-      CoverPulse v1.5.2 ・ <a href="#" id="termsLink">利用規約・プライバシー</a><br>
+      CoverPulse v1.5.3 ・ <a href="#" id="termsLink">利用規約・プライバシー</a><br>
       作者: <a href="https://soundartzix-netizen.github.io/" target="_blank" rel="noopener">Sound Artz</a> ・
       <a href="https://soundartz.booth.pm" target="_blank" rel="noopener">BOOTH</a><br>
       画像・曲・動画はすべてこのブラウザの中で処理され、外部には送信されません。<br>
@@ -2357,10 +2358,11 @@ function makeVideoEncoder(hw) {
       const data = new Uint8Array(chunk.byteLength);
       chunk.copyTo(data);
       seg.chunks.push({ data, pts: chunk.timestamp, key: chunk.type === 'key' });
+      exp.lastOut = performance.now();
     },
     error: e => {
       exp.errors.push(e.message);
-      if (hw !== 'prefer-software' && !exp.done) { exp.enc = makeVideoEncoder('prefer-software'); exp.needKey = true; }
+      if (hw !== 'prefer-software' && !exp.done && !exp.swTried) { exp.swTried = true; exp.enc = makeVideoEncoder('prefer-software'); exp.needKey = true; }
       else exp.failed = true;
     },
   });
@@ -2374,7 +2376,17 @@ function encodeFrame() {
   render(performance.now());
   const enc = exp.enc;
   if (enc.state !== 'configured') return;
-  if (enc.encodeQueueSize > 6) { exp.dropped++; return; } // 変換が追いつかない時はそのコマを飛ばす
+  if (enc.encodeQueueSize > 6) {   // 変換が追いつかない時はそのコマを飛ばす
+    exp.dropped++;
+    // ハードウェア変換が応答しないまま止まる環境がある（エラーも出ない）→ ソフトウェア変換に切り替える
+    if (!exp.swTried && performance.now() - (exp.lastOut || exp.startMs) > 1500) {
+      exp.swTried = true;
+      exp.errors.push('ハードウェア変換が応答しないため、ソフトウェア変換に切り替えました');
+      try { enc.close(); } catch (e) {}
+      exp.enc = makeVideoEncoder('prefer-software'); exp.needKey = true; exp.stallDropped = exp.dropped;
+    }
+    return;
+  }
   // 時刻は音声と同じ時計（AudioContext）で測る → 音ズレしない
   const us = Math.max(Math.round((actx.currentTime - exp.t0) * 1e6), exp.lastUs + 1000);
   exp.lastUs = us;
@@ -2399,7 +2411,7 @@ const pickAudioMime = () => ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4'].find(m =
 
 async function exportWebCodecs(handle, name, codec, aMime) {
   const fps = +$('fps').value;
-  exp = { fps, codec, segs: [], errors: [], dropped: 0, n: 0, lastUs: -1000, needKey: true, failed: false, done: false };
+  exp = { fps, codec, segs: [], errors: [], dropped: 0, n: 0, lastUs: -1000, needKey: true, failed: false, done: false, swTried: false, startMs: performance.now(), lastOut: 0 };
   exp.enc = makeVideoEncoder('no-preference');
   recDest = actx.createMediaStreamDestination();
   recorder = new MediaRecorder(recDest.stream, { mimeType: aMime, audioBitsPerSecond: 320_000 });
@@ -2414,11 +2426,16 @@ async function exportWebCodecs(handle, name, codec, aMime) {
     try {
       const audio = (parseFragmentedMp4(await new Blob(aChunks).arrayBuffer()) || []).find(t => t.kind === 'soun');
       const video = videoTrackFromSegments(exp.segs, fps);
-      if (!video.samples.length) throw new Error('映像のコマが1つもありません');
+      if (!video.samples.length) {
+        const got = exp.segs.reduce((a, sg) => a + sg.chunks.length, 0), noDesc = exp.segs.some(sg => sg.chunks.length && !sg.avcC);
+        const why = got ? (noDesc ? '映像の設定データが届きませんでした' : '映像を組み立てられませんでした') : exp.errors.length ? exp.errors.join(' / ') : '映像の変換が応答しませんでした';
+        $('legacyExport').checked = true; try { localStorage.setItem('coverpulse-legacy-export', '1'); } catch (e) {}
+        throw new Error(`映像のコマが1つもありません（${why}・${exp.n}コマ送信）。この環境向けに「互換モードで書き出す」をONにしました。もう一度「動画を書き出す」を押してください`);
+      }
       if (!audio) problem = '（音声を取り出せませんでした）';
       blob = writeMp4([video, audio].filter(Boolean));
       const dur = audioBuf.duration, got = video.samples.length / fps;
-      if (exp.dropped > fps * 2) problem += `（変換が追いつかず ${exp.dropped} コマ飛ばしました。フレームレートを30fpsにすると改善します）`;
+      if (exp.dropped - (exp.stallDropped || 0) > fps * 2) problem += `（変換が追いつかず ${exp.dropped} コマ飛ばしました。フレームレートを30fpsにすると改善します）`;
       if (exp.failed) problem += '（映像の変換が途中で失敗しました: ' + exp.errors.join(' / ') + '）';
       else if (exp.errors.length) problem += '（途中でソフトウェア変換に切り替えました）';
       console.log('export', { frames: video.samples.length, expected: Math.round(dur * fps), dropped: exp.dropped, errors: exp.errors, got });
@@ -2485,7 +2502,8 @@ function exportLegacy(handle, name, mime) {
 $('exportBtn').onclick = async () => {
   if (recorder) { setStatus('止めています…'); finishExport(); return; }
   const fps = +$('fps').value;
-  const codec = window.VideoEncoder && window.VideoFrame ? await pickAvcCodec(fps) : null;
+  const legacy = $('legacyExport').checked;
+  const codec = !legacy && window.VideoEncoder && window.VideoFrame ? await pickAvcCodec(fps) : null;
   const aMime = pickAudioMime();
   const modern = !!(codec && aMime);
   const mime = modern ? 'video/mp4' : pickMime();
@@ -2508,6 +2526,8 @@ $('exportBtn').onclick = async () => {
 };
 
 $('resaveBtn').onclick = async () => { if (lastExport) setStatus(await saveExport()); };
+try { $('legacyExport').checked = localStorage.getItem('coverpulse-legacy-export') === '1'; } catch (e) {}
+$('legacyExport').onchange = () => { try { localStorage.setItem('coverpulse-legacy-export', $('legacyExport').checked ? '1' : '0'); } catch (e) {} };
 
 // ---------- 解析 ----------
 function curTime() { return playing ? Math.max(0, actx.currentTime - startAt) : 0; }
