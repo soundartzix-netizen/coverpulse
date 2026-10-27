@@ -446,7 +446,7 @@
     </div>
     <div id="sizeNote" class="note"></div>
     <button id="exportBtn" class="primary" disabled>⏺ 動画を書き出す</button>
-    <label class="check" style="font-size:12px"><input type="checkbox" id="legacyExport"> 互換モードで書き出す（うまく書き出せない時に。画面録画方式・タブは表示したままに）</label>
+    <label class="check" style="font-size:12px"><input type="checkbox" id="legacyExport"> 互換モードで書き出す（うまく書き出せない時に。WebM形式・タブは表示したままに）</label>
     <button id="resaveBtn" hidden>💾 もう一度保存</button>
     <div class="note">
       <b>作った動画は YouTube などに自由に公開・収益化できます（クレジット・リンク・連絡は不要）。</b><br>
@@ -459,7 +459,7 @@
     <div id="updateBanner" class="banner" hidden>新しいバージョンがあります。 <button id="updateBtn" class="small">再読み込みして更新</button></div>
     <a class="support" href="https://soundartz.booth.pm/items/8989663" target="_blank" rel="noopener">💖 気に入ったら BOOTH で応援する</a>
     <footer>
-      CoverPulse v1.5.3 ・ <a href="#" id="termsLink">利用規約・プライバシー</a><br>
+      CoverPulse v1.5.4 ・ <a href="#" id="termsLink">利用規約・プライバシー</a><br>
       作者: <a href="https://soundartzix-netizen.github.io/" target="_blank" rel="noopener">Sound Artz</a> ・
       <a href="https://soundartz.booth.pm" target="_blank" rel="noopener">BOOTH</a><br>
       画像・曲・動画はすべてこのブラウザの中で処理され、外部には送信されません。<br>
@@ -2092,6 +2092,34 @@ $('playBtn').onclick = async () => {
 };
 
 // ---------- 書き出し ----------
+// MediaRecorder の WebM には長さが書かれていない（プレーヤーで長さ表示・シークがおかしくなる）ので、Info に Duration を足す
+async function fixWebmDuration(blob, sec) {
+  try {
+    const b = new Uint8Array(await blob.arrayBuffer());
+    let i = -1;
+    for (let k = 0; k < Math.min(b.length - 4, 8192); k++) if (b[k] === 0x15 && b[k + 1] === 0x49 && b[k + 2] === 0xA9 && b[k + 3] === 0x66) { i = k; break; }
+    if (i < 0) return blob;
+    const p = i + 4, len = Math.clz32(b[p]) - 23;   // サイズの長さ（1〜8バイト）
+    if (len < 1 || len > 8) return blob;
+    let size = b[p] & (0xFF >> len);
+    for (let k = 1; k < len; k++) size = size * 256 + b[p + k];
+    const body = b.subarray(p + len, p + len + size);
+    for (let k = 0; k + 1 < body.length; k++) if (body[k] === 0x44 && body[k + 1] === 0x89) return blob;   // もう書かれている
+    const dur = new Uint8Array(11); dur[0] = 0x44; dur[1] = 0x89; dur[2] = 0x88;
+    new DataView(dur.buffer).setFloat64(3, sec * 1000);   // TimecodeScale 1ms 単位
+    const ns = size + 11;
+    if (ns >= 2 ** (7 * len) - 1) return blob;
+    const sz = new Uint8Array(len);
+    let v = ns; for (let k = len - 1; k >= 0; k--) { sz[k] = v & 0xFF; v = Math.floor(v / 256); }
+    sz[0] |= 0x80 >> (len - 1);
+    return new Blob([b.subarray(0, p), sz, body, dur, b.subarray(p + len + size)], { type: blob.type });
+  } catch (e) { return blob; }
+}
+// 互換モード用: 映像の変換（H.264）が動かない PC 向けに、グラフィックを使わない WebM(VP8) を優先する
+function pickMimeCompat() {
+  const list = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm', 'video/mp4'];
+  return list.find(m => MediaRecorder.isTypeSupported(m)) || '';
+}
 function pickMime() {
   const list = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a', 'video/mp4',
                 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
@@ -2477,7 +2505,15 @@ function exportLegacy(handle, name, mime) {
     exportTrack = null;
     vTrack.stop();
     let blob = new Blob(chunks, { type: mime || 'video/webm' });
+    if (blob.size < 2048) {   // 中身が空 = この PC では録画の変換が動いていない
+      recorder = null; recDest = null;
+      $('exportBtn').textContent = '⏺ 動画を書き出す';
+      refresh();
+      setStatus('書き出しに失敗しました: 映像を記録できませんでした（' + (mime || '形式不明') + '）。ブラウザを最新にするか、別のブラウザ（Chrome / Edge）でお試しください');
+      return;
+    }
     if (ext === 'mp4') { setStatus('仕上げ中（シークできるようMP4を整えています）…'); blob = await fixMp4(blob); }
+    else blob = await fixWebmDuration(blob, audioBuf.duration);
     lastExport = { blob, name, handle };
     recorder = null; recDest = null;
     $('exportBtn').textContent = '⏺ 動画を書き出す';
@@ -2506,7 +2542,7 @@ $('exportBtn').onclick = async () => {
   const codec = !legacy && window.VideoEncoder && window.VideoFrame ? await pickAvcCodec(fps) : null;
   const aMime = pickAudioMime();
   const modern = !!(codec && aMime);
-  const mime = modern ? 'video/mp4' : pickMime();
+  const mime = modern ? 'video/mp4' : legacy ? pickMimeCompat() : pickMime();
   const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
   const name = (($('title').value || audioName || 'mv').replace(/[\\/:*?"<>|]/g, '_')) + '.' + ext;
 
