@@ -446,7 +446,7 @@
     </div>
     <div id="sizeNote" class="note"></div>
     <button id="exportBtn" class="primary" disabled>⏺ 動画を書き出す</button>
-    <label class="check" style="font-size:12px"><input type="checkbox" id="legacyExport"> 互換モードで書き出す（うまく書き出せない時に。WebM形式・タブは表示したままに）</label>
+    <label class="check" style="font-size:12px"><input type="checkbox" id="legacyExport"> 互換モードで書き出す（うまく書き出せない時に。WebM形式・1280×720・タブは表示したままに）</label>
     <button id="resaveBtn" hidden>💾 もう一度保存</button>
     <div class="note">
       <b>作った動画は YouTube などに自由に公開・収益化できます（クレジット・リンク・連絡は不要）。</b><br>
@@ -459,7 +459,7 @@
     <div id="updateBanner" class="banner" hidden>新しいバージョンがあります。 <button id="updateBtn" class="small">再読み込みして更新</button></div>
     <a class="support" href="https://soundartz.booth.pm/items/8989663" target="_blank" rel="noopener">💖 気に入ったら BOOTH で応援する</a>
     <footer>
-      CoverPulse v1.5.4 ・ <a href="#" id="termsLink">利用規約・プライバシー</a><br>
+      CoverPulse v1.5.5 ・ <a href="#" id="termsLink">利用規約・プライバシー</a><br>
       作者: <a href="https://soundartzix-netizen.github.io/" target="_blank" rel="noopener">Sound Artz</a> ・
       <a href="https://soundartz.booth.pm" target="_blank" rel="noopener">BOOTH</a><br>
       画像・曲・動画はすべてこのブラウザの中で処理され、外部には送信されません。<br>
@@ -2115,6 +2115,38 @@ async function fixWebmDuration(blob, sec) {
     return new Blob([b.subarray(0, p), sz, body, dur, b.subarray(p + len + size)], { type: blob.type });
   } catch (e) { return blob; }
 }
+// WebM の中で、映像のコマが何秒まで入っているか（秒）。読めなければ null
+async function webmVideoEnd(blob) {
+  try {
+    const b = new Uint8Array(await blob.arrayBuffer());
+    const MASTER = new Set([0x18538067, 0x1654AE6B, 0xAE, 0x1F43B675, 0xA0]);   // Segment, Tracks, TrackEntry, Cluster, BlockGroup
+    let i = 0, num = 0, scale = 1e6, cluster = 0, end = -1;
+    const types = {};
+    const vint = (keep) => {
+      const f = b[i], len = Math.clz32(f) - 23;
+      if (len < 1 || len > 8) throw 0;
+      let v = keep ? f : f & (0xFF >> len), all = (f & (0xFF >> len)) === (0xFF >> len);
+      for (let k = 1; k < len; k++) { v = v * 256 + b[i + k]; if (b[i + k] !== 0xFF) all = false; }
+      i += len; return [v, all];
+    };
+    const uint = (p, n) => { let v = 0; for (let k = 0; k < n; k++) v = v * 256 + b[p + k]; return v; };
+    while (i < b.length - 2) {
+      const [id] = vint(true), [size, unknown] = vint(false);
+      if (MASTER.has(id)) { if (id === 0xAE) num = 0; continue; }   // 中に入る
+      if (unknown) break;
+      const p = i; i += size;
+      if (id === 0x2AD7B1) scale = uint(p, size);          // TimecodeScale
+      else if (id === 0xD7) num = uint(p, size);           // TrackNumber
+      else if (id === 0x83) types[num] = uint(p, size);    // TrackType（1 = 映像）
+      else if (id === 0xE7) cluster = uint(p, size);       // Cluster の Timecode
+      else if (id === 0xA3 || id === 0xA1) {               // SimpleBlock / Block
+        let q = p; const f = b[q], len = Math.clz32(f) - 23; const tn = f & (0xFF >> len); q += len;
+        if (types[tn] === 1) { const rel = (b[q] << 24 >> 16) | b[q + 1]; end = Math.max(end, (cluster + rel) * scale / 1e9); }
+      }
+    }
+    return end < 0 ? null : end;
+  } catch (e) { return null; }
+}
 // 互換モード用: 映像の変換（H.264）が動かない PC 向けに、グラフィックを使わない WebM(VP8) を優先する
 function pickMimeCompat() {
   const list = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm', 'video/mp4'];
@@ -2347,11 +2379,12 @@ async function saveExport() {
 // 書き出し中の描画は専用タイマーで回す。
 // requestAnimationFrame はウィンドウが隠れると止まり、映像だけ止まった動画になるため。
 // （Worker のタイマーは画面が隠れても間引かれにくい）
-let exportTrack = null, exp = null;
+let exportTrack = null, exp = null, exportSmall = null;
 function exportTick() {
   if (exp) { encodeFrame(); return; }
   if (!exportTrack) return;
   render(performance.now());
+  if (exportSmall) exportSmall.x.drawImage(cv, 0, 0, exportSmall.c.width, exportSmall.c.height); // 互換モードは縮小して軽くする
   exportTrack.requestFrame(); // 描いたコマを1枚ずつ録画へ渡す
 }
 let ticker;
@@ -2492,17 +2525,23 @@ async function exportWebCodecs(handle, name, codec, aMime) {
 }
 
 // ---- 書き出し（旧方式）: 画面を MediaRecorder でまるごと録画。新方式が使えないブラウザ用 ----
-function exportLegacy(handle, name, mime) {
+function exportLegacy(handle, name, mime, compat) {
   const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
   const fps = +$('fps').value;
   recDest = actx.createMediaStreamDestination();
-  const vTrack = cv.captureStream(0).getVideoTracks()[0]; // 0 = 自動では取り込まず requestFrame() の時だけ
+  // 互換モード: CPU だけで変換する PC 向けに 1280×720 で録画する（フルHDの約半分の負荷）
+  exportSmall = null;
+  if (compat) {
+    const c = document.createElement('canvas'); c.width = 1280; c.height = 720;
+    exportSmall = { c, x: c.getContext('2d') };
+  }
+  const vTrack = (exportSmall ? exportSmall.c : cv).captureStream(0).getVideoTracks()[0]; // 0 = 自動では取り込まず requestFrame() の時だけ
   const stream = new MediaStream([vTrack, ...recDest.stream.getAudioTracks()]);
   recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: +$('quality').value, audioBitsPerSecond: 320_000 });
   const chunks = [];
   recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
   recorder.onstop = async () => {
-    exportTrack = null;
+    exportTrack = null; exportSmall = null;
     vTrack.stop();
     let blob = new Blob(chunks, { type: mime || 'video/webm' });
     if (blob.size < 2048) {   // 中身が空 = この PC では録画の変換が動いていない
@@ -2514,19 +2553,26 @@ function exportLegacy(handle, name, mime) {
     }
     if (ext === 'mp4') { setStatus('仕上げ中（シークできるようMP4を整えています）…'); blob = await fixMp4(blob); }
     else blob = await fixWebmDuration(blob, audioBuf.duration);
+    // 映像が最後まで記録されたか確かめる（PCの処理が追いつかないと、途中で映像だけ止まることがある）
+    let warn = '';
+    if (ext === 'webm') {
+      const vEnd = await webmVideoEnd(blob);
+      if (vEnd !== null && vEnd < audioBuf.duration - 2)
+        warn = `（⚠ 映像は ${Math.floor(vEnd / 60)}:${String(Math.floor(vEnd % 60)).padStart(2, '0')} までしか記録できていません。PCの処理が追いつかなかったため、それ以降は止まった映像になります。ほかのアプリを閉じ、フレームレートを30fps・画質を「標準」にしてやり直してください）`;
+    }
     lastExport = { blob, name, handle };
     recorder = null; recDest = null;
     $('exportBtn').textContent = '⏺ 動画を書き出す';
     refresh();
     const msg = await saveExport();
-    setStatus('書き出し完了（' + (blob.size / 1048576).toFixed(1) + ' MB）。' + msg);
+    setStatus('書き出し完了（' + (blob.size / 1048576).toFixed(1) + ' MB）。' + msg + warn);
     $('resaveBtn').hidden = false; $('st4').classList.add('done');
   };
   $('playBtn').textContent = '▶ プレビュー';
   $('resaveBtn').hidden = true;
   refresh();
   $('exportBtn').textContent = '■ 止めて保存';
-  setStatus('書き出し中… このタブを表示したままにしてください (' + (mime || 'default') + ')');
+  setStatus('書き出し中… このタブを表示したままにしてください (' + (mime || 'default') + (compat ? '・互換モード 1280×720' : '') + ')');
   recorder.start(1000);
   exportTrack = vTrack;
   ticker.postMessage(fps);
@@ -2558,7 +2604,7 @@ $('exportBtn').onclick = async () => {
   }
   await actx.resume();
   if (modern) exportWebCodecs(handle, name, codec, aMime);
-  else exportLegacy(handle, name, mime);
+  else exportLegacy(handle, name, mime, legacy);
 };
 
 $('resaveBtn').onclick = async () => { if (lastExport) setStatus(await saveExport()); };
