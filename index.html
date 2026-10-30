@@ -446,12 +446,13 @@
     </div>
     <div id="sizeNote" class="note"></div>
     <button id="exportBtn" class="primary" disabled>⏺ 動画を書き出す</button>
+    <label class="check" style="font-size:12px"><input type="checkbox" id="offlineExport"> 確実モードで書き出す（時間はかかるがコマ落ちしない。遅いPC・カクつく時に。別の作業をしていてもOK）</label>
     <label class="check" style="font-size:12px"><input type="checkbox" id="legacyExport"> 互換モードで書き出す（うまく書き出せない時に。WebM形式・1280×720・タブは表示したままに）</label>
     <button id="resaveBtn" hidden>💾 もう一度保存</button>
     <div class="note">
       <b>作った動画は YouTube などに自由に公開・収益化できます（クレジット・リンク・連絡は不要）。</b><br>
-      書き出しは曲と同じ長さの時間がかかります（再生しながら録画するため）。<br>
-      書き出し中はこのタブを表示したままにしてください。別タブにするとコマ落ちします。<br>
+      通常の書き出しは曲と同じ長さの時間がかかります（再生しながら録画するため）。書き出し中はこのタブを表示したままにしてください。<br>
+      カクつく・止まる時は「確実モード」を使ってください。曲を再生せず1コマずつ作るのでコマ落ちしません（PCによっては曲より長くかかります）。<br>
       保存形式: MP4（ブラウザ非対応なら WebM）。どちらもそのまま YouTube に上げられます。<br>
       Chrome / Edge で開くと、書き出し時に保存先を選べます。
     </div>
@@ -459,7 +460,7 @@
     <div id="updateBanner" class="banner" hidden>新しいバージョンがあります。 <button id="updateBtn" class="small">再読み込みして更新</button></div>
     <a class="support" href="https://soundartz.booth.pm/items/8989663" target="_blank" rel="noopener">💖 気に入ったら BOOTH で応援する</a>
     <footer>
-      CoverPulse v1.5.5 ・ <a href="#" id="termsLink">利用規約・プライバシー</a><br>
+      CoverPulse v1.6 ・ <a href="#" id="termsLink">利用規約・プライバシー</a><br>
       作者: <a href="https://soundartzix-netizen.github.io/" target="_blank" rel="noopener">Sound Artz</a> ・
       <a href="https://soundartz.booth.pm" target="_blank" rel="noopener">BOOTH</a><br>
       画像・曲・動画はすべてこのブラウザの中で処理され、外部には送信されません。<br>
@@ -2490,13 +2491,13 @@ async function exportWebCodecs(handle, name, codec, aMime) {
       if (!video.samples.length) {
         const got = exp.segs.reduce((a, sg) => a + sg.chunks.length, 0), noDesc = exp.segs.some(sg => sg.chunks.length && !sg.avcC);
         const why = got ? (noDesc ? '映像の設定データが届きませんでした' : '映像を組み立てられませんでした') : exp.errors.length ? exp.errors.join(' / ') : '映像の変換が応答しませんでした';
-        $('legacyExport').checked = true; try { localStorage.setItem('coverpulse-legacy-export', '1'); } catch (e) {}
-        throw new Error(`映像のコマが1つもありません（${why}・${exp.n}コマ送信）。この環境向けに「互換モードで書き出す」をONにしました。もう一度「動画を書き出す」を押してください`);
+        $('offlineExport').checked = true; try { localStorage.setItem('coverpulse-offline-export', '1'); } catch (e) {}
+        throw new Error(`映像のコマが1つもありません（${why}・${exp.n}コマ送信）。この環境向けに「確実モードで書き出す」をONにしました。もう一度「動画を書き出す」を押してください`);
       }
       if (!audio) problem = '（音声を取り出せませんでした）';
       blob = writeMp4([video, audio].filter(Boolean));
       const dur = audioBuf.duration, got = video.samples.length / fps;
-      if (exp.dropped - (exp.stallDropped || 0) > fps * 2) problem += `（変換が追いつかず ${exp.dropped} コマ飛ばしました。フレームレートを30fpsにすると改善します）`;
+      if (exp.dropped - (exp.stallDropped || 0) > fps * 2) problem += `（変換が追いつかず ${exp.dropped} コマ飛ばしました。30fps にするか、「確実モードで書き出す」をお試しください）`;
       if (exp.failed) problem += '（映像の変換が途中で失敗しました: ' + exp.errors.join(' / ') + '）';
       else if (exp.errors.length) problem += '（途中でソフトウェア変換に切り替えました）';
       console.log('export', { frames: video.samples.length, expected: Math.round(dur * fps), dropped: exp.dropped, errors: exp.errors, got });
@@ -2558,7 +2559,7 @@ function exportLegacy(handle, name, mime, compat) {
     if (ext === 'webm') {
       const vEnd = await webmVideoEnd(blob);
       if (vEnd !== null && vEnd < audioBuf.duration - 2)
-        warn = `（⚠ 映像は ${Math.floor(vEnd / 60)}:${String(Math.floor(vEnd % 60)).padStart(2, '0')} までしか記録できていません。PCの処理が追いつかなかったため、それ以降は止まった映像になります。ほかのアプリを閉じ、フレームレートを30fps・画質を「標準」にしてやり直してください）`;
+        warn = `（⚠ 映像は ${Math.floor(vEnd / 60)}:${String(Math.floor(vEnd % 60)).padStart(2, '0')} までしか記録できていません。PCの処理が追いつかなかったため、それ以降は止まった映像になります。「確実モードで書き出す」をONにしてやり直してください）`;
     }
     lastExport = { blob, name, handle };
     recorder = null; recDest = null;
@@ -2581,9 +2582,301 @@ function exportLegacy(handle, name, mime, compat) {
   watchdog = setInterval(() => { if (actx.currentTime >= end) finishExport(); }, 250);
 }
 
+// ---- 書き出し（確実モード）: 曲を再生せず、1コマずつ描いて変換する ----
+// 再生と競争しないので、遅い PC でも時間がかかるだけでコマ落ちしない。
+// off が入っている間は、時計（curTime）と音の解析（analyse）が曲のデータから動く。
+let off = null;
+
+// AnalyserNode と同じ計算（ブラックマン窓 → FFT → 1/N → 時間方向のスムージング → dB）
+function offFFT(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang), h = len >> 1;
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < h; k++) {
+        const a = i + k, b = a + h, xr = re[b] * cr - im[b] * ci, xi = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - xr; im[b] = im[a] - xi; re[a] += xr; im[a] += xi;
+        const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
+      }
+    }
+  }
+}
+function offlineAnalyse() {
+  const N = 2048, { mono, re, im, win, smooth } = off, end = Math.round(off.t * off.sr);
+  for (let i = 0; i < N; i++) {
+    const p = end - N + i, x = p >= 0 && p < mono.length ? mono[p] : 0;
+    wave[i] = Math.max(0, Math.min(255, Math.floor(128 * (1 + x))));
+    re[i] = x * win[i]; im[i] = 0;
+  }
+  offFFT(re, im);
+  for (let k = 0; k < N / 2; k++) {
+    const mag = Math.hypot(re[k], im[k]) / N;
+    smooth[k] = 0.75 * smooth[k] + 0.25 * mag;
+    freq[k] = Math.max(0, Math.min(255, Math.floor(255 * (20 * Math.log10(smooth[k] || 1e-20) + 100) / 70)));
+    beatSpec[k] = 20 * Math.log10(mag || 1e-20);
+  }
+}
+
+const offYieldCh = new MessageChannel();
+let offYieldRes = null;
+offYieldCh.port1.onmessage = () => { const r = offYieldRes; offYieldRes = null; r && r(); };
+// 画面が隠れていても遅くならない「ひと休み」（setTimeout は隠れると1秒に間引かれる）
+const offYield = () => new Promise(r => { offYieldRes = r; offYieldCh.port2.postMessage(0); });
+
+// その変換が本当に動くか、数コマ試す（受け付けるのに何も出さない環境がある）
+async function probeEncoder(cfg) {
+  let got = 0, desc = false, enc;
+  try {
+    const sup = await VideoEncoder.isConfigSupported(cfg);
+    if (!sup.supported) return false;
+    enc = new VideoEncoder({ output: (c, m) => { got++; if (m && m.decoderConfig && m.decoderConfig.description) desc = true; }, error: () => {} });
+    enc.configure(cfg);
+    for (let i = 0; i < 4; i++) { const f = new VideoFrame(cv, { timestamp: i * 33333 }); enc.encode(f, { keyFrame: i === 0 }); f.close(); }
+    await Promise.race([enc.flush(), new Promise(r => setTimeout(r, 4000))]);
+  } catch (e) { return false; }
+  try { enc.close(); } catch (e) {}
+  return got > 0 && (!cfg.avc || desc);
+}
+const offAudioCfg = codec => codec === 'opus'
+  ? { codec: 'opus', sampleRate: 48000, numberOfChannels: 2, bitrate: 192000 }
+  : { codec: 'mp4a.40.2', sampleRate: 48000, numberOfChannels: 2, bitrate: 192000, aac: { format: 'aac' } }   // Windows の AAC は 192kbps まで;
+async function audioCodecOk(codec) {
+  try { return window.AudioEncoder && (await AudioEncoder.isConfigSupported(offAudioCfg(codec))).supported; } catch (e) { return false; }
+}
+// 使える形式を選ぶ: H.264 + AAC の MP4 → だめなら CPU だけで動く VP8 + Opus の WebM
+async function pickOfflineFormat() {
+  if (!window.VideoEncoder || !window.VideoFrame) return null;
+  const fps = +$('fps').value, base = { width: W, height: H, bitrate: +$('quality').value, framerate: fps };
+  if (await audioCodecOk('mp4a.40.2')) {
+    const codec = await pickAvcCodec(fps);
+    if (codec) for (const hw of ['no-preference', 'prefer-software']) {
+      const cfg = { ...base, codec, hardwareAcceleration: hw, avc: { format: 'avc' } };
+      if (await probeEncoder(cfg)) return { ext: 'mp4', video: cfg, audio: 'mp4a.40.2' };
+    }
+  }
+  if (await audioCodecOk('opus')) for (const codec of ['vp8', 'vp09.00.40.08']) {
+    const cfg = { ...base, codec, hardwareAcceleration: 'prefer-software' };
+    if (await probeEncoder(cfg)) return { ext: 'webm', video: cfg, audio: 'opus' };
+  }
+  return null;
+}
+
+// 曲を 48kHz ステレオにして音声を変換する
+async function encodeOfflineAudio(codec) {
+  const rate = 48000, len = Math.ceil(audioBuf.duration * rate);
+  const oc = new OfflineAudioContext(2, len, rate), s = oc.createBufferSource();
+  s.buffer = audioBuf; s.connect(oc.destination); s.start();
+  const pcm = await oc.startRendering();
+  const out = { packets: [], desc: null, error: null };
+  const enc = new AudioEncoder({
+    output: (c, m) => {
+      const data = new Uint8Array(c.byteLength); c.copyTo(data);
+      out.packets.push({ data, us: c.timestamp, dur: c.duration });
+      const d = m && m.decoderConfig && m.decoderConfig.description;
+      if (d && !out.desc) out.desc = ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength).slice() : new Uint8Array(d).slice();
+    },
+    error: e => { out.error = e.message; },
+  });
+  enc.configure(offAudioCfg(codec));
+  const L = pcm.getChannelData(0), R = pcm.getChannelData(1), step = 4800;
+  for (let p = 0; p < len; p += step) {
+    const n = Math.min(step, len - p), buf = new Float32Array(n * 2);
+    buf.set(L.subarray(p, p + n), 0); buf.set(R.subarray(p, p + n), n);
+    const ad = new AudioData({ format: 'f32-planar', sampleRate: rate, numberOfFrames: n, numberOfChannels: 2, timestamp: Math.round(p / rate * 1e6), data: buf });
+    enc.encode(ad); ad.close();
+    if (enc.encodeQueueSize > 16) await offYield();
+  }
+  await enc.flush(); enc.close();
+  if (out.error) throw new Error('音声の変換に失敗: ' + out.error);
+  return out;
+}
+
+// AAC の音声トラック（MP4 用）
+function aacTrack(a) {
+  const { u16, u32, box, fullbox, cat } = MP4, ts = 48000, asc = a.desc || new Uint8Array([0x11, 0x90]);
+  const rate = [0, 2, 0xEE, 0];   // 平均ビットレートの目安 192kbps
+  const dec = [0x05, asc.length, ...asc];
+  const dcd = [0x04, 13 + dec.length, 0x40, 0x15, 0, 0, 0, ...rate, ...rate, ...dec];
+  const sl = [0x06, 1, 2];
+  const es = new Uint8Array([0x03, 3 + dcd.length + sl.length, 0, 1, 0, ...dcd, ...sl]);
+  const mp4a = box('mp4a', new Uint8Array(6), u16(1), u32([0, 0]), u16(2), u16(16), u16(0), u16(0), u32(ts * 65536), fullbox('esds', 0, 0, es));
+  const samples = [], chunks = [];
+  a.packets.forEach(p => samples.push({ size: p.data.length, dur: Math.max(1, Math.round((p.dur || 21333) * ts / 1e6)), cto: 0, sync: true }));
+  for (let i = 0; i < a.packets.length; i += 40) {
+    const part = a.packets.slice(i, i + 40);
+    chunks.push({ n: part.length, start: part[0].us / 1e6, parts: part.map(p => p.data), len: part.reduce((s, p) => s + p.data.length, 0) });
+  }
+  return { kind: 'soun', ts, samples, chunks, stsd: fullbox('stsd', 0, 0, u32([1]), mp4a) };
+}
+
+// WebM（映像 + Opus）を組み立てる。目次（Cues）つきなのでシークできる
+function writeWebm(video, audio, width, height, durSec, codecId) {
+  const { cat, enc } = MP4;
+  const vsize = n => { const o = new Uint8Array(8); o[0] = 1; new DataView(o.buffer).setUint32(4, n); o[3] = Math.floor(n / 2 ** 32); return o; };
+  const uintB = (n, w) => { const o = new Uint8Array(w); for (let i = w - 1; i >= 0; i--) { o[i] = n % 256; n = Math.floor(n / 256); } return o; };
+  const el = (id, ...parts) => { const b = cat(parts.map(p => p instanceof Uint8Array ? p : new Uint8Array(p))); return cat([new Uint8Array(id), vsize(b.length), b]); };
+  const uel = (id, n) => el(id, uintB(n, n < 256 ? 1 : n < 65536 ? 2 : n < 2 ** 32 ? 4 : 8));
+  const fel = (id, x) => { const o = new Uint8Array(8); new DataView(o.buffer).setFloat64(0, x); return el(id, o); };
+  const sel = (id, s) => el(id, enc.encode(s));
+  const opusHead = audio.desc && audio.desc.length >= 19 ? audio.desc
+    : new Uint8Array([0x4F, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64, 1, 2, 0x38, 1, 0x80, 0xBB, 0, 0, 0, 0, 0]);
+  const preSkip = opusHead[10] | (opusHead[11] << 8);
+  const ebml = el([0x1A, 0x45, 0xDF, 0xA3], uel([0x42, 0x86], 1), uel([0x42, 0xF7], 1), uel([0x42, 0xF2], 4), uel([0x42, 0xF3], 8),
+                  sel([0x42, 0x82], 'webm'), uel([0x42, 0x87], 4), uel([0x42, 0x85], 2));
+  const info = el([0x15, 0x49, 0xA9, 0x66], uel([0x2A, 0xD7, 0xB1], 1000000), sel([0x4D, 0x80], 'CoverPulse'), sel([0x57, 0x41], 'CoverPulse'), fel([0x44, 0x89], durSec * 1000));
+  const tracks = el([0x16, 0x54, 0xAE, 0x6B],
+    el([0xAE], uel([0xD7], 1), uel([0x73, 0xC5], 1), uel([0x83], 1), sel([0x86], codecId), el([0xE0], uel([0xB0], width), uel([0xBA], height))),
+    el([0xAE], uel([0xD7], 2), uel([0x73, 0xC5], 2), uel([0x83], 2), sel([0x86], 'A_OPUS'), el([0x63, 0xA2], opusHead),
+       uel([0x56, 0xAA], Math.round(preSkip / 48000 * 1e9)), uel([0x56, 0xBB], 80000000), el([0xE1], fel([0xB5], 48000), uel([0x9F], 2))));
+  // 映像と音声を時刻順に混ぜて、キーフレームごとに区切る
+  const all = video.map(v => ({ ms: Math.round(v.us / 1000), tr: 1, data: v.data, key: v.key }))
+    .concat(audio.packets.map(p => ({ ms: Math.round(p.us / 1000), tr: 2, data: p.data, key: true })))
+    .sort((a, b) => a.ms - b.ms || a.tr - b.tr);
+  const clusters = [];   // { ms, bytes(parts), len }
+  let cur = null;
+  const flush = () => { if (cur) clusters.push(cur); cur = null; };
+  for (const f of all) {
+    if (!cur || (f.tr === 1 && f.key && f.ms - cur.ms >= 1000) || f.ms - cur.ms > 30000) { flush(); cur = { ms: f.ms, parts: [], len: 0 }; }
+    const rel = f.ms - cur.ms;
+    const hdr = new Uint8Array([0xA3, 0x01, 0, 0, 0, 0, 0, 0, 0, 0x80 | f.tr, (rel >> 8) & 255, rel & 255, f.key ? 0x80 : 0]);
+    const n = f.data.length + 4;
+    hdr[5] = Math.floor(n / 2 ** 24) & 255; hdr[6] = (n >> 16) & 255; hdr[7] = (n >> 8) & 255; hdr[8] = n & 255;
+    cur.parts.push(hdr, f.data); cur.len += hdr.length + f.data.length;
+  }
+  flush();
+  const SEEK_LEN = el([0x11, 0x4D, 0x9B, 0x74], ...[[0x15, 0x49, 0xA9, 0x66], [0x16, 0x54, 0xAE, 0x6B], [0x1C, 0x53, 0xBB, 0x6B]].map(id =>
+    el([0x4D, 0xBB], el([0x53, 0xAB], id), el([0x53, 0xAC], uintB(0, 8))))).length;
+  const infoPos = SEEK_LEN, tracksPos = infoPos + info.length;
+  let pos = tracksPos + tracks.length;
+  const points = [], clusterParts = [];
+  for (const c of clusters) {
+    const tc = uel([0xE7], c.ms), bodyLen = tc.length + c.len;
+    points.push(el([0xBB], uel([0xB3], c.ms), el([0xB7], uel([0xF7], 1), uel([0xF1], pos))));
+    clusterParts.push(new Uint8Array([0x1F, 0x43, 0xB6, 0x75]), vsize(bodyLen), tc, ...c.parts);
+    pos += 4 + 8 + bodyLen;
+  }
+  const cues = el([0x1C, 0x53, 0xBB, 0x6B], ...points);
+  const seek = (id, p) => el([0x4D, 0xBB], el([0x53, 0xAB], id), el([0x53, 0xAC], uintB(p, 8)));
+  const seekHead = el([0x11, 0x4D, 0x9B, 0x74], seek([0x15, 0x49, 0xA9, 0x66], infoPos), seek([0x16, 0x54, 0xAE, 0x6B], tracksPos), seek([0x1C, 0x53, 0xBB, 0x6B], pos));
+  const segLen = pos + cues.length;
+  return new Blob([ebml, new Uint8Array([0x18, 0x53, 0x80, 0x67]), vsize(segLen), seekHead, info, tracks, ...clusterParts, cues], { type: 'video/webm' });
+}
+
+// 重ねる動画をそのコマの時刻に合わせる（再生ではなく1コマずつシーク）
+async function offSeekVideo(t) {
+  if (!ovVideo) return;
+  const tgt = t + S.vidOffset;
+  if (tgt < 0 || tgt > ovVideo.duration) return;
+  if (!ovVideo.paused) ovVideo.pause();
+  await new Promise(r => {
+    const to = setTimeout(r, 3000);
+    ovVideo.addEventListener('seeked', () => { clearTimeout(to); r(); }, { once: true });
+    ovVideo.currentTime = tgt;
+  });
+}
+
+async function exportOffline(handle, name, f) {
+  const fps = +$('fps').value, dur = audioBuf.duration, total = Math.ceil(dur * fps), N = 2048;
+  stopAudio();
+  const mono = new Float32Array(audioBuf.length), chs = audioBuf.numberOfChannels;
+  for (let c = 0; c < chs; c++) { const d = audioBuf.getChannelData(c); for (let i = 0; i < d.length; i++) mono[i] += d[i] / chs; }
+  const win = new Float32Array(N);
+  for (let i = 0; i < N; i++) win[i] = 0.42 - 0.5 * Math.cos(2 * Math.PI * i / N) + 0.08 * Math.cos(4 * Math.PI * i / N);
+  off = { t: 0, sr: audioBuf.sampleRate, mono, win, re: new Float64Array(N), im: new Float64Array(N), smooth: new Float64Array(N / 2), cancel: false };
+  recorder = { state: 'inactive' };   // 「書き出し中」の印（プレビューなどのボタンを止める）
+  $('playBtn').textContent = '▶ プレビュー';
+  $('resaveBtn').hidden = true;
+  refresh();
+  $('exportBtn').textContent = '■ 中止する';
+  // 再生の時と同じ状態から始める
+  flash = pulse = 0; fluxAvg = 0; lastKick = -1; bandLevel = -100; beatPrev.fill(-100); barVals.fill(0);
+  particles = []; fxRuntime.clear(); resetRuntimes();
+  last = -1000 / fps;
+
+  let blob = null, problem = '';
+  const started = performance.now();
+  try {
+    setStatus('確実モード: 音声を変換しています…');
+    const audio = await encodeOfflineAudio(f.audio);
+    playing = true;
+    const seg = { avcC: null, chunks: [] };
+    let encError = null;
+    const enc = new VideoEncoder({
+      output: (chunk, meta) => {
+        const d = meta && meta.decoderConfig && meta.decoderConfig.description;
+        if (d && !seg.avcC) seg.avcC = ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength).slice() : new Uint8Array(d).slice();
+        const data = new Uint8Array(chunk.byteLength); chunk.copyTo(data);
+        seg.chunks.push({ data, pts: chunk.timestamp, us: chunk.timestamp, key: chunk.type === 'key' });
+      },
+      error: e => { encError = e.message; },
+    });
+    enc.configure(f.video);
+    for (let n = 0; n < total; n++) {
+      if (off.cancel) throw new Error('cancel');
+      if (encError) throw new Error('映像の変換に失敗: ' + encError);
+      off.t = n / fps;
+      await offSeekVideo(off.t);
+      render(off.t * 1000);
+      const vf = new VideoFrame(cv, { timestamp: Math.round(n * 1e6 / fps), duration: Math.round(1e6 / fps) });
+      enc.encode(vf, { keyFrame: n % (fps * 2) === 0 });
+      vf.close();
+      // 変換が詰まっていたら、空くまで次のコマを描かずに待つ（ここがコマ落ちしない理由）
+      const waitFrom = performance.now();
+      while (enc.encodeQueueSize > 3 && !encError) {
+        if (performance.now() - waitFrom > 60000) throw new Error('映像の変換が止まりました');
+        await new Promise(r => { const t = setTimeout(r, 200); enc.addEventListener('dequeue', () => { clearTimeout(t); r(); }, { once: true }); });
+      }
+      if (n % 10 === 0 || n === total - 1) {
+        const pct = (n + 1) / total, left = (performance.now() - started) / 1000 * (1 - pct) / pct;
+        setStatus(`確実モードで書き出し中… ${Math.floor(pct * 100)}%（${n + 1} / ${total} コマ・残り約${left >= 90 ? Math.ceil(left / 60) + '分' : Math.ceil(left) + '秒'}）`);
+      }
+      await offYield();
+    }
+    setStatus('仕上げ中（映像の変換を待っています）…');
+    await Promise.race([enc.flush(), new Promise((_, j) => setTimeout(() => j(new Error('映像の変換が終わりませんでした')), 120000))]);
+    enc.close();
+    if (!seg.chunks.length) throw new Error('映像のコマが1つもありません');
+    if (f.ext === 'mp4') blob = writeMp4([videoTrackFromSegments([seg], fps), aacTrack(audio)]);
+    else blob = writeWebm(seg.chunks, audio, W, H, dur, f.video.codec === 'vp8' ? 'V_VP8' : 'V_VP9');
+    console.log('offline export', { frames: seg.chunks.length, expected: total, format: f.ext, codec: f.video.codec, hw: f.video.hardwareAcceleration, sec: (performance.now() - started) / 1000 });
+  } catch (e) { problem = e.message === 'cancel' ? '書き出しを中止しました' : '書き出しに失敗しました: ' + e.message; }
+  off = null; playing = false; recorder = null; last = performance.now();
+  $('exportBtn').textContent = '⏺ 動画を書き出す';
+  refresh();
+  if (!blob) { setStatus(problem); return; }
+  lastExport = { blob, name, handle };
+  const msg = await saveExport();
+  setStatus('書き出し完了（' + (blob.size / 1048576).toFixed(1) + ' MB・確実モード ' + f.ext.toUpperCase() + '）。' + msg);
+  $('resaveBtn').hidden = false; $('st4').classList.add('done');
+}
+
 $('exportBtn').onclick = async () => {
+  if (off) { off.cancel = true; setStatus('中止しています…'); return; }
   if (recorder) { setStatus('止めています…'); finishExport(); return; }
   const fps = +$('fps').value;
+  if ($('offlineExport').checked) {
+    $('exportBtn').disabled = true;
+    setStatus('確実モード: 使える変換方式を調べています…');
+    const f = await pickOfflineFormat();
+    $('exportBtn').disabled = false;
+    if (!f) { setStatus('このブラウザは確実モードに対応していません。最新の Chrome / Edge でお試しください'); return; }
+    const name = (($('title').value || audioName || 'mv').replace(/[\/:*?"<>|]/g, '_')) + '.' + f.ext;
+    let handle = null;
+    if (window.showSaveFilePicker) {
+      try {
+        handle = await showSaveFilePicker({ suggestedName: name, types: [{ description: '動画', accept: { [f.ext === 'mp4' ? 'video/mp4' : 'video/webm']: ['.' + f.ext] } }] });
+      } catch (e) { if (e.name === 'AbortError') { setStatus('書き出しをキャンセルしました'); return; } }
+    }
+    exportOffline(handle, name, f);
+    return;
+  }
   const legacy = $('legacyExport').checked;
   const codec = !legacy && window.VideoEncoder && window.VideoFrame ? await pickAvcCodec(fps) : null;
   const aMime = pickAudioMime();
@@ -2609,15 +2902,18 @@ $('exportBtn').onclick = async () => {
 
 $('resaveBtn').onclick = async () => { if (lastExport) setStatus(await saveExport()); };
 try { $('legacyExport').checked = localStorage.getItem('coverpulse-legacy-export') === '1'; } catch (e) {}
+try { $('offlineExport').checked = localStorage.getItem('coverpulse-offline-export') === '1'; } catch (e) {}
+$('offlineExport').onchange = () => { try { localStorage.setItem('coverpulse-offline-export', $('offlineExport').checked ? '1' : '0'); } catch (e) {} };
 $('legacyExport').onchange = () => { try { localStorage.setItem('coverpulse-legacy-export', $('legacyExport').checked ? '1' : '0'); } catch (e) {} };
 
 // ---------- 解析 ----------
-function curTime() { return playing ? Math.max(0, actx.currentTime - startAt) : 0; }
+function curTime() { if (off) return off.t; return playing ? Math.max(0, actx.currentTime - startAt) : 0; }
 function fmt(s) { s = Math.floor(s); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
 
 function analyse(dt) {
   if (!freq) return;
-  if (playing) { analyser.getByteFrequencyData(freq); analyser.getByteTimeDomainData(wave); }
+  if (off) offlineAnalyse();
+  else if (playing) { analyser.getByteFrequencyData(freq); analyser.getByteTimeDomainData(wave); }
   else { freq.fill(0); wave.fill(128); }
   let b = 0;
   for (let i = 1; i <= 6; i++) b += freq[i];
@@ -2628,7 +2924,7 @@ function analyse(dt) {
   // 判定は直近の平均との比なので、曲の音量・音圧に関係なく同じように反応する。
   let kick = 0;
   if (playing) {
-    beatAnalyser.getFloatFrequencyData(beatSpec);
+    if (!off) beatAnalyser.getFloatFrequencyData(beatSpec);
     const hz = actx.sampleRate / beatAnalyser.fftSize;
     const [lo, hi] = S.beatBand === 'kick' ? [40, 130] : [20, 250];
     // 曲の低域レベルより24dB以上小さい成分（キック間のノイズなど）は判定に使わない
@@ -2649,7 +2945,7 @@ function analyse(dt) {
     const thr = fluxAvg * ratio + 3;
     kick = Math.min(1, Math.max(0, (f - thr) / (thr * 0.8)));
     // 1つのキックで二重に反応しないよう、反応後50〜150msは無視する（直後50msはピークを拾うため許可）
-    const now = actx.currentTime, since = now - lastKick;
+    const now = off ? off.t : actx.currentTime, since = now - lastKick;
     if (since > 0.05 && since < 0.15) kick = 0;
     else if (kick > 0.15 && since >= 0.15) lastKick = now;
   } else { beatPrev && beatPrev.fill(-100); fluxAvg = 0; lastKick = -1; bandLevel = -100; }
@@ -2809,7 +3105,7 @@ function vizLinear(t) {
 }
 
 function drawViz(box) {
-  const accent = S.accent, t = performance.now() / 1000, multi = S.vizColor !== 'accent';
+  const accent = S.accent, t = off ? off.t : performance.now() / 1000, multi = S.vizColor !== 'accent';
   g.save();
   const paint = !multi ? accent : S.viz === 'circleBars' || S.viz === 'circleWave' ? vizConic(CX, box.cy, t) : vizLinear(t);
   g.strokeStyle = g.fillStyle = paint;
@@ -2920,6 +3216,7 @@ function drawOverlay() {
 function syncVideo() {
   if (!ovVideo) return false;
   const target = curTime() + S.vidOffset;
+  if (off) return target >= 0 && target <= ovVideo.duration;   // 確実モードは1コマずつシーク済み
   if (!playing) { if (!ovVideo.paused) ovVideo.pause(); return true; }
   if (target < 0 || target > ovVideo.duration) { if (!ovVideo.paused) ovVideo.pause(); return false; }
   if (ovVideo.paused) { ovVideo.currentTime = target; ovVideo.play().catch(() => {}); }
@@ -3132,7 +3429,7 @@ function render(now) {
 let lastRenderError = '';
 function loop(now) {
   requestAnimationFrame(loop);
-  if (exportTrack || exp) return;
+  if (exportTrack || exp || off) return;
   try { render(now); }
   catch (e) {
     g.reset ? g.reset() : g.setTransform(1, 0, 0, 1, 0, 0); // 途中で止まった描画の状態を戻す
